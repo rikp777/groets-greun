@@ -335,8 +335,8 @@
         let timerInterval;
 
         // --- Network Sync Setup ---
-        const MQTT_BROKER = "wss://test.mosquitto.org:8081/mqtt";
-        const TOPIC_PREFIX = "groetsgreun/score/panningen/";
+        const MQTT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
+        const TOPIC_PREFIX = "groetsgreun/score/panningen/2024/";
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
         let opponentScore = 0;
@@ -384,17 +384,37 @@
         function initMQTT() {
             if (!myTeam || mqttClient) return;
             
-            mqttClient = mqtt.connect(MQTT_BROKER);
+            console.log("Connecting to MQTT sync...");
+            mqttClient = mqtt.connect(MQTT_BROKER, {
+                clientId: 'gg_' + myClientId,
+                clean: true,
+                connectTimeout: 4000,
+                reconnectPeriod: 1000,
+            });
             
             mqttClient.on('connect', () => {
+                console.log("Connected to sync server");
                 document.getElementById('sync-indicator').classList.add('connected');
                 // Subscribe to both teams' topics
-                mqttClient.subscribe(TOPIC_PREFIX + '#');
-                // Publish our current state for late joiners
-                publishState();
+                mqttClient.subscribe(TOPIC_PREFIX + '#', (err) => {
+                    if (!err) {
+                        console.log("Subscribed to sync topics");
+                        publishState();
+                    }
+                });
             });
 
-            mqttClient.on('disconnect', () => {
+            mqttClient.on('reconnect', () => {
+                console.log("Reconnecting to sync server...");
+            });
+
+            mqttClient.on('offline', () => {
+                console.log("Sync server offline");
+                document.getElementById('sync-indicator').classList.remove('connected');
+            });
+
+            mqttClient.on('error', (err) => {
+                console.error("Sync error:", err);
                 document.getElementById('sync-indicator').classList.remove('connected');
             });
 
