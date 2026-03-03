@@ -289,6 +289,47 @@
             font-size: 0.9em;
         }
 
+        #leiding-message-history {
+            background: #fff8e1;
+            border: 2px solid #ffb300;
+            border-radius: 12px;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+
+        #leiding-message-history h3 {
+            margin: 0 0 8px 0;
+            font-size: 0.95em;
+            color: #e65100;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        #leiding-message-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        #leiding-message-list li {
+            background: white;
+            border: 1px solid #ffe082;
+            border-radius: 8px;
+            padding: 7px 8px;
+            margin-bottom: 6px;
+            font-size: 0.9em;
+            line-height: 1.25;
+        }
+
+        #leiding-message-list .meta {
+            display: block;
+            margin-top: 3px;
+            font-size: 0.78em;
+            color: #8d6e63;
+        }
+
         #race-moment {
             background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
             color: white;
@@ -570,11 +611,16 @@
             </label>
         </div>
 
+        <div id="leiding-message-history">
+            <h3>Berichten Van Leiding</h3>
+            <ul id="leiding-message-list"></ul>
+        </div>
+
         <div id="race-moment">
             <div class="title">Race Moment</div>
             <div id="race-moment-text">Wachten op Leiding...</div>
             <div id="race-moment-meta" class="meta"></div>
-            <button id="race-claim-btn" onclick="claimRaceBonus()">BONUS CLAIMEN (+15)</button>
+            <button id="race-claim-btn" onclick="claimRaceBonus()">CHALLENGE KLAAR</button>
         </div>
         
         <div class="grid" id="photo-grid">
@@ -651,7 +697,8 @@
             stateLegacy: 'groetsGreunState',
             start: 'groetsGreunStart',
             team: 'groetsGreunTeam',
-            showOpp: 'groetsGreunShowOpp'
+            showOpp: 'groetsGreunShowOpp',
+            messageHistoryPrefix: 'groetsGreunLeidingMsg_'
         };
         const RESET_SESSION_KEY = 'groetsGreunLastResetTime';
 
@@ -662,11 +709,8 @@
         let timerInterval;
         let lastTrollTime = 0;
         const TROLL_COOLDOWN = 75 * 1000;
-        const SCORE_REVEAL_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
-        const SCORE_REVEAL_WINDOW_MS = 60 * 1000; // reveal for 1 minute
         const RACE_INTERVAL_MS = 12 * 60 * 1000; // new challenge every 12 minutes
         const RACE_WINDOW_MS = 2 * 60 * 1000; // challenge active for 2 minutes
-        const RACE_BONUS_POINTS = 15;
         const RACE_CHALLENGES = [
             "Maak een creatieve teamselfie met iets roods.",
             "Doe een groepsfoto met iedereen springend in de lucht.",
@@ -679,6 +723,7 @@
         // --- Network Sync Setup ---
         const MQTT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
         const TOPIC_PREFIX = "groetsgreun/score/panningen/2024/";
+        const TOPIC_APPROVED_PREFIX = TOPIC_PREFIX + 'approved/';
         const GAME_START_TOPIC = TOPIC_PREFIX + 'gameStart';
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
@@ -688,11 +733,19 @@
         let opponentScore = 0;
         let leidingState = { 'Groen': {}, 'Geel': {} };
         let leidingRaceClaims = { 'Groen': {}, 'Geel': {} };
+        let approvedState = { 'Groen': {}, 'Geel': {} };
+        let leidingMessageHistory = [];
         function getTeamStateKey(team) {
             return `groetsGreunState_${team}`;
         }
         function getTeamRaceClaimsKey(team) {
             return `groetsGreunRaceClaims_${team}`;
+        }
+        function getTeamApprovedKey(team) {
+            return `groetsGreunApproved_${team}`;
+        }
+        function getMessageHistoryKey(team) {
+            return `${STORAGE_KEYS.messageHistoryPrefix}${team}`;
         }
 
         function normalizeState(rawState) {
@@ -769,8 +822,74 @@
             localStorage.setItem(getTeamRaceClaimsKey(myTeam), JSON.stringify(normalizeRaceClaims(raceClaims)));
         }
 
-        function getRaceBonusPoints(claims) {
-            return Object.keys(normalizeRaceClaims(claims)).length * RACE_BONUS_POINTS;
+        function loadApprovedForTeam(team) {
+            let parsed = {};
+            try {
+                parsed = JSON.parse(localStorage.getItem(getTeamApprovedKey(team)) || '{}') || {};
+            } catch (e) {
+                parsed = {};
+            }
+            return normalizeState(parsed);
+        }
+
+        function saveApprovedForTeam(team) {
+            localStorage.setItem(getTeamApprovedKey(team), JSON.stringify(normalizeState(approvedState[team] || {})));
+        }
+
+        function getPointsFromState(teamState) {
+            let score = 0;
+            photos.forEach(p => {
+                if (teamState[p.id]) score += p.points;
+            });
+            return score;
+        }
+
+        function loadMessageHistory(team) {
+            if (!team || team === 'Leiding') return [];
+            let parsed = [];
+            try {
+                parsed = JSON.parse(localStorage.getItem(getMessageHistoryKey(team)) || '[]') || [];
+            } catch (e) {
+                parsed = [];
+            }
+            return Array.isArray(parsed) ? parsed : [];
+        }
+
+        function saveMessageHistory(team, history) {
+            if (!team || team === 'Leiding') return;
+            localStorage.setItem(getMessageHistoryKey(team), JSON.stringify(history.slice(0, 30)));
+        }
+
+        function renderMessageHistory() {
+            const list = document.getElementById('leiding-message-list');
+            if (!list) return;
+            list.innerHTML = '';
+
+            if (!leidingMessageHistory.length) {
+                const empty = document.createElement('li');
+                empty.innerText = "Nog geen berichten.";
+                list.appendChild(empty);
+                return;
+            }
+
+            leidingMessageHistory.forEach(item => {
+                const li = document.createElement('li');
+                const when = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+                li.textContent = String(item.message || '');
+                const meta = document.createElement('span');
+                meta.className = 'meta';
+                meta.textContent = when;
+                li.appendChild(meta);
+                list.appendChild(li);
+            });
+        }
+
+        function pushLeidingMessage(message, timestamp = Date.now()) {
+            if (!myTeam || myTeam === 'Leiding') return;
+            leidingMessageHistory.unshift({ message: String(message || ''), timestamp: Number(timestamp || Date.now()) });
+            leidingMessageHistory = leidingMessageHistory.slice(0, 30);
+            saveMessageHistory(myTeam, leidingMessageHistory);
+            renderMessageHistory();
         }
 
         function seededRoundIndex(seed) {
@@ -832,10 +951,10 @@
             if (moment.active) {
                 box.style.opacity = '1';
                 text.innerText = moment.challenge;
-                meta.innerText = `Nog ${formatClock(moment.msLeft)} | Bonus: +${RACE_BONUS_POINTS} pt`;
+                meta.innerText = `Nog ${formatClock(moment.msLeft)} | Extra team challenge`;
                 btn.style.display = isLeiding ? 'none' : 'block';
                 btn.disabled = alreadyClaimed;
-                btn.innerText = alreadyClaimed ? 'BONUS AL GECLAIMD' : `BONUS CLAIMEN (+${RACE_BONUS_POINTS})`;
+                btn.innerText = alreadyClaimed ? 'CHALLENGE AL GEMELD' : 'CHALLENGE KLAAR';
                 btn.style.opacity = alreadyClaimed ? '0.65' : '1';
             } else {
                 box.style.opacity = '0.85';
@@ -851,6 +970,10 @@
             localStorage.removeItem(getTeamStateKey('Geel'));
             localStorage.removeItem(getTeamRaceClaimsKey('Groen'));
             localStorage.removeItem(getTeamRaceClaimsKey('Geel'));
+            localStorage.removeItem(getTeamApprovedKey('Groen'));
+            localStorage.removeItem(getTeamApprovedKey('Geel'));
+            localStorage.removeItem(getMessageHistoryKey('Groen'));
+            localStorage.removeItem(getMessageHistoryKey('Geel'));
             localStorage.removeItem(STORAGE_KEYS.start);
             localStorage.removeItem(STORAGE_KEYS.team);
             localStorage.removeItem(STORAGE_KEYS.showOpp);
@@ -873,6 +996,11 @@
             if (toggleContainer) {
                 toggleContainer.style.display = isLeiding ? 'none' : 'block';
             }
+
+            const historyBox = document.getElementById('leiding-message-history');
+            if (historyBox) {
+                historyBox.style.display = isLeiding ? 'none' : 'block';
+            }
         }
 
         function getRelativeTime(timestamp) {
@@ -886,6 +1014,13 @@
             if (myTeam) {
                 state = myTeam === 'Leiding' ? {} : loadStateForTeam(myTeam);
                 raceClaims = myTeam === 'Leiding' ? {} : loadRaceClaimsForTeam(myTeam);
+                approvedState['Groen'] = loadApprovedForTeam('Groen');
+                approvedState['Geel'] = loadApprovedForTeam('Geel');
+                leidingMessageHistory = loadMessageHistory(myTeam);
+                if (myTeam === 'Groen' || myTeam === 'Geel') {
+                    const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
+                    opponentScore = getPointsFromState(approvedState[myOppTeam] || {});
+                }
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
                 
@@ -898,6 +1033,7 @@
                 updateScore();
                 renderGrid();
                 updateRaceMomentUI();
+                renderMessageHistory();
 
                 // Refresh relative times every 30 seconds
                 setInterval(renderGrid, 30000);
@@ -962,6 +1098,8 @@
                         publishState();
                         if (myTeam === 'Leiding' && startTime) {
                             publishGameStartWhenConnected(Number(startTime), 0, false);
+                            publishApprovedState('Groen');
+                            publishApprovedState('Geel');
                         }
                     }
                 });
@@ -1007,6 +1145,7 @@
 
                     if (topic.endsWith('/notify')) {
                         if (data.targetTeam === myTeam || data.targetTeam === 'Beide') {
+                            pushLeidingMessage(data.message, data.timestamp || Date.now());
                             showNotification(data.message);
                         }
                         return;
@@ -1024,6 +1163,21 @@
                         return;
                     }
 
+                    if (topic.startsWith(TOPIC_APPROVED_PREFIX)) {
+                        const team = topic.substring(TOPIC_APPROVED_PREFIX.length);
+                        if (team === 'Groen' || team === 'Geel') {
+                            approvedState[team] = normalizeState(data.state || {});
+                            saveApprovedForTeam(team);
+                            const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
+                            if (myTeam !== 'Leiding' && (team === myTeam || team === myOppTeam)) {
+                                opponentScore = getPointsFromState(approvedState[myOppTeam]);
+                            }
+                            updateScore();
+                            renderGrid();
+                        }
+                        return;
+                    }
+
                     const topicSuffix = topic.startsWith(TOPIC_PREFIX) ? topic.substring(TOPIC_PREFIX.length) : "";
                     const isTeamTopic = topicSuffix === 'Groen' || topicSuffix === 'Geel';
                     if (!isTeamTopic || !data || typeof data.state !== 'object') return;
@@ -1037,12 +1191,8 @@
                         // Received Opponent's State
                         opponentState = normalizeState(data.state);
                         opponentRaceClaims = normalizeRaceClaims(data.raceClaims || {});
-                        let oppScore = 0;
-                        photos.forEach(p => {
-                            if (opponentState[p.id]) oppScore += p.points;
-                        });
-                        oppScore += getRaceBonusPoints(opponentRaceClaims);
-                        opponentScore = oppScore;
+                        const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
+                        opponentScore = getPointsFromState(approvedState[myOppTeam] || {});
                         updateScoreDisplay();
                         renderGrid(); 
                     } else if (data.clientId !== myClientId) {
@@ -1089,6 +1239,34 @@
             }
         }
 
+        function publishApprovedState(team) {
+            if (!mqttClient || !mqttClient.connected || myTeam !== 'Leiding') return;
+            const payload = JSON.stringify({
+                team: team,
+                state: normalizeState(approvedState[team] || {}),
+                timestamp: Date.now(),
+                by: 'Leiding'
+            });
+            mqttClient.publish(TOPIC_APPROVED_PREFIX + team, payload, { retain: true, qos: 1 });
+        }
+
+        function toggleApproval(team, photoId, event) {
+            if (event) event.stopPropagation();
+            if (myTeam !== 'Leiding') return;
+            if (!approvedState[team]) approvedState[team] = {};
+
+            if (approvedState[team][photoId]) {
+                approvedState[team][photoId] = false;
+            } else {
+                approvedState[team][photoId] = Date.now();
+            }
+
+            saveApprovedForTeam(team);
+            publishApprovedState(team);
+            updateScoreDisplay();
+            renderGrid();
+        }
+
         function publishGameStartWhenConnected(startTimestamp, attempt = 0, announce = true) {
             const maxAttempts = 30; // ~6 seconds total retry window
             if (!mqttClient || !mqttClient.connected) {
@@ -1118,7 +1296,12 @@
             raceClaims = loadRaceClaimsForTeam(myTeam);
             opponentState = {};
             opponentRaceClaims = {};
+            approvedState['Groen'] = loadApprovedForTeam('Groen');
+            approvedState['Geel'] = loadApprovedForTeam('Geel');
+            leidingMessageHistory = loadMessageHistory(myTeam);
             opponentScore = 0;
+            const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
+            opponentScore = getPointsFromState(approvedState[myOppTeam] || {});
             startTime = localStorage.getItem(STORAGE_KEYS.start);
             
             document.getElementById('intro-screen').style.display = 'none';
@@ -1129,6 +1312,7 @@
             updateScore();
             renderGrid();
             updateRaceMomentUI();
+            renderMessageHistory();
             applyRoleUi();
 
             if (!startTime) {
@@ -1141,6 +1325,9 @@
             localStorage.setItem(STORAGE_KEYS.team, 'Leiding');
             state = {};
             raceClaims = {};
+            approvedState['Groen'] = loadApprovedForTeam('Groen');
+            approvedState['Geel'] = loadApprovedForTeam('Geel');
+            leidingMessageHistory = [];
             
             // Leiding sets the authoritative game start time for all devices.
             if (!startTime) startTime = Date.now();
@@ -1154,6 +1341,7 @@
             updateScoreDisplay();
             renderGrid();
             updateRaceMomentUI();
+            renderMessageHistory();
             applyRoleUi();
             publishGameStartWhenConnected(Number(startTime));
         }
@@ -1196,6 +1384,8 @@
                 if (myTeam === 'Leiding') {
                     const groenVal = leidingState['Groen'][photo.id];
                     const geelVal = leidingState['Geel'][photo.id];
+                    const groenApproved = approvedState['Groen'][photo.id];
+                    const geelApproved = approvedState['Geel'][photo.id];
                     
                     if (groenVal) {
                         const time = typeof groenVal === 'number' ? ` (${getRelativeTime(groenVal)})` : "";
@@ -1205,11 +1395,30 @@
                         const time = typeof geelVal === 'number' ? ` (${getRelativeTime(geelVal)})` : "";
                         badges += `<div class="opp-badge" style="background:#fbc02d; color:black; margin-top:2px;">Geel gevonden${time}</div>`;
                     }
+
+                    if (groenApproved) {
+                        badges += `<div class="opp-badge" style="color:#2e7d32;">Groen: punten toegekend</div>`;
+                    }
+                    if (geelApproved) {
+                        badges += `<div class="opp-badge" style="color:#f9a825;">Geel: punten toegekend</div>`;
+                    }
+
+                    badges += `
+                        <div style="display:flex; gap:6px; margin-top:4px;">
+                            <button class="mini-btn" style="background:${groenApproved ? '#1b5e20' : '#4caf50'}; color:white; flex:1;" onclick="toggleApproval('Groen','${photo.id}', event)">
+                                ${groenApproved ? 'Groen OK' : '+ Groen'}
+                            </button>
+                            <button class="mini-btn" style="background:${geelApproved ? '#f57f17' : '#fbc02d'}; color:black; flex:1;" onclick="toggleApproval('Geel','${photo.id}', event)">
+                                ${geelApproved ? 'Geel OK' : '+ Geel'}
+                            </button>
+                        </div>
+                    `;
                     
                     if (groenVal && geelVal) card.classList.add('found');
                 } else {
                     const myFoundVal = state[photo.id];
                     const isFound = myFoundVal === true || typeof myFoundVal === 'number';
+                    const myApprovedVal = approvedState[myTeam] ? approvedState[myTeam][photo.id] : false;
                     
                     const oppFoundVal = opponentState[photo.id];
                     const isOpponentFound = (oppFoundVal === true || typeof oppFoundVal === 'number') && showOpponentProgress;
@@ -1220,6 +1429,10 @@
                     if (isOpponentFound) {
                         const timeStr = typeof oppFoundVal === 'number' ? ` (${getRelativeTime(oppFoundVal)})` : "";
                         badges += `<div class="opp-badge">Tegenstander gevonden${timeStr}</div>`;
+                    }
+
+                    if (myApprovedVal) {
+                        badges += `<div class="opp-badge" style="color:#2e7d32;">Punten toegekend</div>`;
                     }
                 }
                 
@@ -1296,7 +1509,8 @@
             if (mqttClient && mqttClient.connected) {
                 mqttClient.publish(TOPIC_PREFIX + 'notify', JSON.stringify({
                     targetTeam: target,
-                    message: message
+                    message: message,
+                    timestamp: Date.now()
                 }));
                 msgInput.value = '';
                 alert("Bericht verstuurd naar " + target);
@@ -1367,49 +1581,30 @@
 
         function updateScore() {
             let myScore = 0;
-            photos.forEach(p => {
-                if (state[p.id]) myScore += p.points;
-            });
-            myScore += getRaceBonusPoints(raceClaims);
+            if (myTeam === 'Groen' || myTeam === 'Geel') {
+                myScore = getPointsFromState(approvedState[myTeam] || {});
+            }
             updateScoreDisplay(myScore);
         }
 
         function updateScoreDisplay(myScore = null) {
             if (myTeam === 'Leiding') {
-                let groenScore = 0;
-                let geelScore = 0;
-                photos.forEach(p => {
-                    if (leidingState['Groen'][p.id]) groenScore += p.points;
-                    if (leidingState['Geel'][p.id]) geelScore += p.points;
-                });
-                groenScore += getRaceBonusPoints(leidingRaceClaims['Groen']);
-                geelScore += getRaceBonusPoints(leidingRaceClaims['Geel']);
+                const groenScore = getPointsFromState(approvedState['Groen'] || {});
+                const geelScore = getPointsFromState(approvedState['Geel'] || {});
                 document.getElementById('my-team-score').innerText = `Team Groen: ${groenScore} pt`;
                 document.getElementById('opp-team-score').innerText = `Team Geel: ${geelScore} pt`;
                 return;
             }
 
             if (myScore === null) {
-                myScore = 0;
-                photos.forEach(p => { if (state[p.id]) myScore += p.points; });
-                myScore += getRaceBonusPoints(raceClaims);
+                myScore = getPointsFromState(approvedState[myTeam] || {});
             }
             
             const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
             const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
-            const shouldReveal = isOpponentScoreRevealWindow();
 
             document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
-            document.getElementById('opp-team-score').innerText = shouldReveal
-                ? `${oppDisplay}: ${opponentScore} pt`
-                : `${oppDisplay}: verborgen`;
-        }
-
-        function isOpponentScoreRevealWindow() {
-            if (!startTime || myTeam === 'Leiding') return false;
-            const elapsed = Date.now() - Number(startTime);
-            if (elapsed < 0) return false;
-            return (elapsed % SCORE_REVEAL_INTERVAL_MS) < SCORE_REVEAL_WINDOW_MS;
+            document.getElementById('opp-team-score').innerText = `${oppDisplay}: verborgen`;
         }
 
         function startTimerInterval() {
@@ -1460,16 +1655,10 @@
             
             // Calculate scores based on current role
             if (myTeam === 'Leiding') {
-                photos.forEach(p => {
-                    if (leidingState['Groen'][p.id]) groenScore += p.points;
-                    if (leidingState['Geel'][p.id]) geelScore += p.points;
-                });
-                groenScore += getRaceBonusPoints(leidingRaceClaims['Groen']);
-                geelScore += getRaceBonusPoints(leidingRaceClaims['Geel']);
+                groenScore = getPointsFromState(approvedState['Groen'] || {});
+                geelScore = getPointsFromState(approvedState['Geel'] || {});
             } else {
-                let myScore = 0;
-                photos.forEach(p => { if (state[p.id]) myScore += p.points; });
-                myScore += getRaceBonusPoints(raceClaims);
+                const myScore = getPointsFromState(approvedState[myTeam] || {});
                 
                 if (myTeam === 'Groen') {
                     groenScore = myScore;
@@ -1534,6 +1723,8 @@
             // Persist cleared team states for reconnecting clients.
             mqttClient.publish(TOPIC_PREFIX + 'Groen', clearPayload, { retain: true, qos: 1 });
             mqttClient.publish(TOPIC_PREFIX + 'Geel', geelPayload, { retain: true, qos: 1 });
+            mqttClient.publish(TOPIC_APPROVED_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
+            mqttClient.publish(TOPIC_APPROVED_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
 
             // Retained reset makes sure briefly disconnected clients still receive it.
             mqttClient.publish(TOPIC_PREFIX + 'reset', resetPayload, { retain: true, qos: 1 });
@@ -1576,3 +1767,4 @@
     </script>
 </body>
 </html>
+
