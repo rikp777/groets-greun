@@ -355,6 +355,36 @@
             flex-direction: column;
         }
 
+        /* Winner Overlay */
+        #winner-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+
+        #winner-overlay h1 { font-size: 3em; margin: 0; color: var(--secondary); }
+        #winner-overlay .score-summary { font-size: 1.5em; margin: 20px 0; }
+
+        @keyframes pulse-timer {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        .urgent-timer {
+            animation: pulse-timer 1s infinite;
+            background-color: #dc3545 !important;
+            color: white !important;
+        }
+
     </style>
 </head>
 <body>
@@ -432,6 +462,16 @@
         <div>🤪 TROLLED! 🤪</div>
         <div style="font-size: 0.4em; margin-top: 10px;">Je scherm is even in de war!</div>
     </div>
+
+    <!-- Winner Overlay -->
+    <div id="winner-overlay">
+        <h1 id="winner-name">TEAM ... WINT!</h1>
+        <div class="score-summary" id="final-scores">Score: 0 - 0</div>
+        <p>Gefeliciteerd! De fototocht is afgelopen.</p>
+        <div id="admin-reset-area" style="display:none;">
+            <button class="btn reset-btn" onclick="resetGame()">HEEL SPEL RESETTEN</button>
+        </div>
+    </div>
     
     <!-- Connection Indicator -->
     <div id="sync-indicator" class="sync-indicator" title="Verbinding met andere telefoons"></div>
@@ -501,6 +541,12 @@
                 // Refresh relative times every 30 seconds
                 setInterval(renderGrid, 30000);
                 updateTrollButton();
+                
+                // Hide reset button for regular teams
+                const resetBtn = document.querySelector('.reset-btn');
+                if (resetBtn) {
+                    resetBtn.style.display = myTeam === 'Leiding' ? 'inline-block' : 'none';
+                }
             }
 
             // Pinch Zoom Listeners
@@ -578,6 +624,11 @@
                         if (data.targetTeam === myTeam) {
                             triggerTrollEffect();
                         }
+                        return;
+                    }
+                    
+                    if (topic.endsWith('/reset')) {
+                        location.reload();
                         return;
                     }
 
@@ -855,22 +906,73 @@
             const elapsed = now - parseInt(startTime);
             const totalMs = TOTAL_MINUTES * 60 * 1000;
             const remaining = totalMs - elapsed;
+            const timerEl = document.getElementById('timer');
 
             if (remaining <= 0) {
-                document.getElementById('timer').innerText = "00:00";
-                document.getElementById('timer').style.backgroundColor = "#dc3545";
-                document.getElementById('timer').style.color = "white";
+                timerEl.innerText = "00:00";
+                timerEl.classList.remove('urgent-timer');
+                showWinner();
                 return;
             }
 
             const m = Math.floor(remaining / 60000);
             const s = Math.floor((remaining % 60000) / 1000);
-            document.getElementById('timer').innerText = `${m}:${s < 10 ? '0' : ''}${s}`;
+            timerEl.innerText = `${m}:${s < 10 ? '0' : ''}${s}`;
             
-            if (m < 5) {
-                document.getElementById('timer').style.backgroundColor = "#ffc107";
-                document.getElementById('timer').style.color = "#000";
+            if (m < 10) {
+                timerEl.classList.add('urgent-timer');
+            } else if (m < 20) {
+                timerEl.style.backgroundColor = "#ffc107";
+                timerEl.style.color = "#000";
             }
+        }
+
+        function showWinner() {
+            let groenScore = 0;
+            let geelScore = 0;
+            
+            // Calculate scores based on current role
+            if (myTeam === 'Leiding') {
+                photos.forEach(p => {
+                    if (leidingState['Groen'][p.id]) groenScore += p.points;
+                    if (leidingState['Geel'][p.id]) geelScore += p.points;
+                });
+            } else {
+                let myScore = 0;
+                photos.forEach(p => { if (state[p.id]) myScore += p.points; });
+                
+                if (myTeam === 'Groen') {
+                    groenScore = myScore;
+                    geelScore = opponentScore;
+                } else {
+                    geelScore = myScore;
+                    groenScore = opponentScore;
+                }
+            }
+
+            const winnerOverlay = document.getElementById('winner-overlay');
+            const winnerName = document.getElementById('winner-name');
+            const finalScores = document.getElementById('final-scores');
+            
+            if (groenScore > geelScore) {
+                winnerName.innerText = "TEAM GROEN WINT!";
+                winnerName.style.color = "#4caf50";
+            } else if (geelScore > groenScore) {
+                winnerName.innerText = "TEAM GEEL WINT!";
+                winnerName.style.color = "#fbc02d";
+            } else {
+                winnerName.innerText = "HET IS GELIJKSPEL!";
+                winnerName.style.color = "white";
+            }
+
+            finalScores.innerText = `Score: Groen ${groenScore} - ${geelScore} Geel`;
+            winnerOverlay.style.display = 'flex';
+            
+            if (myTeam === 'Leiding') {
+                document.getElementById('admin-reset-area').style.display = 'block';
+            }
+            
+            triggerConfetti();
         }
 
         function triggerConfetti() {
@@ -885,23 +987,19 @@
         }
 
         function resetGame() {
-            if(confirm("Weet je zeker dat je het hele spel wilt resetten? De tijd en alle punten gaan verloren!")) {
+            if(confirm("Weet je zeker dat je het hele spel wilt resetten? Iedereen wordt teruggestuurd naar het beginscherm!")) {
                 // Clear local storage
                 localStorage.removeItem('groetsGreunState');
                 localStorage.removeItem('groetsGreunStart');
                 localStorage.removeItem('groetsGreunTeam');
                 
-                // Clear local variables
-                state = {};
-                opponentState = {};
-                startTime = null;
-                myTeam = null;
-                opponentScore = 0;
-                
                 if (mqttClient) {
                     // Clear retained messages to reset the broker for a new game
                     mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {} }), { retain: true });
                     mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {} }), { retain: true });
+                    
+                    // Broadcast reset to all clients
+                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload' }));
                     
                     // Small delay to ensure messages are sent before reload
                     setTimeout(() => {
