@@ -385,6 +385,65 @@
             color: white !important;
         }
 
+        /* Leiding Control Panel */
+        #leiding-controls {
+            display: none;
+            background: #333;
+            color: white;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 10px;
+        }
+
+        .control-group {
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group input {
+            flex-grow: 1;
+            padding: 8px;
+            border-radius: 5px;
+            border: none;
+        }
+
+        .mini-btn {
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+
+        /* Notification Toast */
+        #notification-toast {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--secondary);
+            color: black;
+            padding: 15px 25px;
+            border-radius: 50px;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 11000;
+            text-align: center;
+            border: 3px solid black;
+            max-width: 80%;
+            animation: slideDown 0.5s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { top: -100px; }
+            to { top: 20px; }
+        }
+
     </style>
 </head>
 <body>
@@ -428,6 +487,25 @@
 
     <!-- Game Screen -->
     <div id="game-screen">
+        <!-- Leiding Controls -->
+        <div id="leiding-controls">
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: 0.9em; color: #ffc107;">LEIDING DASHBOARD</div>
+            
+            <div class="control-group">
+                <input type="text" id="notify-msg" placeholder="Bericht naar teams...">
+                <button class="mini-btn" style="background:#4caf50; color:white;" onclick="sendNotification('Groen')">GROEN</button>
+                <button class="mini-btn" style="background:#fbc02d; color:black;" onclick="sendNotification('Geel')">GEEL</button>
+                <button class="mini-btn" style="background:#2196f3; color:white;" onclick="sendNotification('Beide')">BEIDE</button>
+            </div>
+
+            <div class="control-group">
+                <span>Troll:</span>
+                <button class="mini-btn" style="background:#e91e63; color:white;" onclick="leidingTroll('Groen')">GROEN</button>
+                <button class="mini-btn" style="background:#e91e63; color:white;" onclick="leidingTroll('Geel')">GEEL</button>
+                <button class="mini-btn" style="background:#e91e63; color:white;" onclick="leidingTroll('Beide')">BEIDE</button>
+            </div>
+        </div>
+
         <div class="toggle-container">
             <span>Toon voortgang tegenstander</span>
             <label class="switch">
@@ -472,6 +550,9 @@
             <button class="btn reset-btn" onclick="resetGame()">HEEL SPEL RESETTEN</button>
         </div>
     </div>
+    
+    <!-- Notification Toast -->
+    <div id="notification-toast"></div>
     
     <!-- Connection Indicator -->
     <div id="sync-indicator" class="sync-indicator" title="Verbinding met andere telefoons"></div>
@@ -546,6 +627,12 @@
                 const resetBtn = document.querySelector('.reset-btn');
                 if (resetBtn) {
                     resetBtn.style.display = myTeam === 'Leiding' ? 'inline-block' : 'none';
+                }
+
+                // Show leiding controls
+                const leidingControls = document.getElementById('leiding-controls');
+                if (leidingControls) {
+                    leidingControls.style.display = myTeam === 'Leiding' ? 'block' : 'none';
                 }
             }
 
@@ -629,6 +716,13 @@
                     
                     if (topic.endsWith('/reset')) {
                         location.reload();
+                        return;
+                    }
+
+                    if (topic.endsWith('/notify')) {
+                        if (data.targetTeam === myTeam || data.targetTeam === 'Beide') {
+                            showNotification(data.message);
+                        }
                         return;
                     }
 
@@ -824,6 +918,46 @@
                 document.body.classList.remove('trolled');
                 overlay.style.display = 'none';
             }, 4000); // Effect lasts 4 seconds
+        }
+
+        function sendNotification(target) {
+            const msgInput = document.getElementById('notify-msg');
+            const message = msgInput.value.trim();
+            if (!message) return;
+
+            if (mqttClient && mqttClient.connected) {
+                mqttClient.publish(TOPIC_PREFIX + 'notify', JSON.stringify({
+                    targetTeam: target,
+                    message: message
+                }));
+                msgInput.value = '';
+                alert("Bericht verstuurd naar " + target);
+            }
+        }
+
+        function leidingTroll(target) {
+            if (mqttClient && mqttClient.connected) {
+                // Leiding troll targets can be individual or 'Beide'
+                const targets = target === 'Beide' ? ['Groen', 'Geel'] : [target];
+                targets.forEach(t => {
+                    mqttClient.publish(TOPIC_PREFIX + 'troll', JSON.stringify({
+                        targetTeam: t,
+                        from: 'Leiding'
+                    }));
+                });
+                alert("Troll verstuurd naar " + target);
+            }
+        }
+
+        function showNotification(message) {
+            const toast = document.getElementById('notification-toast');
+            toast.innerText = "📢 BERICHT VAN LEIDING:\n" + message;
+            toast.style.display = 'block';
+            
+            // Auto hide after 8 seconds
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, 8000);
         }
 
         function openModal(src, event) {
