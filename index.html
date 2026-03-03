@@ -886,9 +886,12 @@
 
         function resetGame() {
             if(confirm("Weet je zeker dat je het hele spel wilt resetten? De tijd en alle punten gaan verloren!")) {
+                // Clear local storage
                 localStorage.removeItem('groetsGreunState');
                 localStorage.removeItem('groetsGreunStart');
                 localStorage.removeItem('groetsGreunTeam');
+                
+                // Clear local variables
                 state = {};
                 opponentState = {};
                 startTime = null;
@@ -897,24 +900,16 @@
                 
                 if (mqttClient) {
                     // Clear retained messages to reset the broker for a new game
-                    mqttClient.publish(TOPIC_PREFIX + 'Groen', '', { retain: true });
-                    mqttClient.publish(TOPIC_PREFIX + 'Geel', '', { retain: true });
-                    mqttClient.end();
-                    mqttClient = null;
+                    mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {} }), { retain: true });
+                    mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {} }), { retain: true });
+                    
+                    // Small delay to ensure messages are sent before reload
+                    setTimeout(() => {
+                        location.reload();
+                    }, 500);
+                } else {
+                    location.reload();
                 }
-
-                clearInterval(timerInterval);
-                document.getElementById('timer').innerText = "75:00";
-                document.getElementById('timer').style.backgroundColor = "rgba(0,0,0,0.2)";
-                document.getElementById('timer').style.color = "white";
-                document.getElementById('intro-screen').style.display = 'block';
-                document.getElementById('game-screen').style.display = 'none';
-                
-                document.getElementById('my-team-score').innerText = "Wij (Kies Team): 0 pt";
-                document.getElementById('opp-team-score').innerText = "Zij (Tegenstander): 0 pt";
-                
-                const grid = document.getElementById('photo-grid');
-                grid.innerHTML = '';
             }
         }
 
