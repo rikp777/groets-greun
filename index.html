@@ -605,10 +605,18 @@
         ];
 
         const TOTAL_MINUTES = 75;
-        let state = JSON.parse(localStorage.getItem('groetsGreunState')) || {};
-        let startTime = localStorage.getItem('groetsGreunStart');
-        let myTeam = localStorage.getItem('groetsGreunTeam');
-        let showOpponentProgress = localStorage.getItem('groetsGreunShowOpp') === 'true';
+        const STORAGE_KEYS = {
+            stateLegacy: 'groetsGreunState',
+            start: 'groetsGreunStart',
+            team: 'groetsGreunTeam',
+            showOpp: 'groetsGreunShowOpp'
+        };
+        const RESET_SESSION_KEY = 'groetsGreunLastResetTime';
+
+        let state = {};
+        let startTime = localStorage.getItem(STORAGE_KEYS.start);
+        let myTeam = localStorage.getItem(STORAGE_KEYS.team);
+        let showOpponentProgress = localStorage.getItem(STORAGE_KEYS.showOpp) === 'true';
         let timerInterval;
         let lastTrollTime = 0;
         const TROLL_COOLDOWN = 75 * 1000;
@@ -621,7 +629,60 @@
         let opponentState = {};
         let opponentScore = 0;
         let leidingState = { 'Groen': {}, 'Geel': {} };
-        let lastResetTime = 0;
+        function getTeamStateKey(team) {
+            return `groetsGreunState_${team}`;
+        }
+
+        function normalizeState(rawState) {
+            const normalized = {};
+            if (!rawState || typeof rawState !== 'object') return normalized;
+
+            photos.forEach(photo => {
+                if (!Object.prototype.hasOwnProperty.call(rawState, photo.id)) return;
+                const value = rawState[photo.id];
+                if (value === false || value === true || typeof value === 'number') {
+                    normalized[photo.id] = value;
+                }
+            });
+            return normalized;
+        }
+
+        function loadStateForTeam(team) {
+            if (!team || team === 'Leiding') return {};
+
+            let parsed = {};
+            try {
+                parsed = JSON.parse(localStorage.getItem(getTeamStateKey(team)) || '{}') || {};
+            } catch (e) {
+                parsed = {};
+            }
+
+            // One-time migration from the old single shared state key.
+            if (Object.keys(parsed).length === 0) {
+                try {
+                    const legacy = JSON.parse(localStorage.getItem(STORAGE_KEYS.stateLegacy) || '{}') || {};
+                    parsed = legacy;
+                } catch (e) {
+                    parsed = {};
+                }
+            }
+
+            return normalizeState(parsed);
+        }
+
+        function saveStateForTeam() {
+            if (!myTeam || myTeam === 'Leiding') return;
+            localStorage.setItem(getTeamStateKey(myTeam), JSON.stringify(normalizeState(state)));
+        }
+
+        function clearGameLocalData() {
+            localStorage.removeItem(STORAGE_KEYS.stateLegacy);
+            localStorage.removeItem(getTeamStateKey('Groen'));
+            localStorage.removeItem(getTeamStateKey('Geel'));
+            localStorage.removeItem(STORAGE_KEYS.start);
+            localStorage.removeItem(STORAGE_KEYS.team);
+            localStorage.removeItem(STORAGE_KEYS.showOpp);
+        }
 
         function getRelativeTime(timestamp) {
             if (!timestamp) return "";
@@ -632,6 +693,7 @@
 
         function initApp() {
             if (startTime && myTeam) {
+                state = myTeam === 'Leiding' ? {} : loadStateForTeam(myTeam);
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
                 
@@ -658,6 +720,11 @@
                 const leidingControls = document.getElementById('leiding-controls');
                 if (leidingControls) {
                     leidingControls.style.display = myTeam === 'Leiding' ? 'block' : 'none';
+                }
+
+                const toggleContainer = document.querySelector('.toggle-container');
+                if (toggleContainer) {
+                    toggleContainer.style.display = myTeam === 'Leiding' ? 'none' : 'block';
                 }
             }
 
@@ -730,6 +797,7 @@
 
             mqttClient.on('message', (topic, message) => {
                 try {
+                    if (!message || message.length === 0) return;
                     const data = JSON.parse(message.toString());
                     
                     if (topic.endsWith('/troll')) {
@@ -740,12 +808,12 @@
                     }
                     
                     if (topic.endsWith('/reset')) {
-                        // Only reload if this is a fresh reset (transient event)
-                        // We check timestamp to prevent immediate loop if message was retained
-                        const resetTime = data.timestamp || 0;
-                        if (resetTime > lastResetTime) {
+                        const resetTime = Number(data.timestamp || 0);
+                        const seenResetTime = Number(sessionStorage.getItem(RESET_SESSION_KEY) || 0);
+                        if (resetTime > 0 && resetTime > seenResetTime) {
                             console.log("Global reset received, reloading...");
-                            lastResetTime = resetTime;
+                            sessionStorage.setItem(RESET_SESSION_KEY, String(resetTime));
+                            clearGameLocalData();
                             location.reload();
                         }
                         return;
@@ -758,19 +826,17 @@
                         return;
                     }
 
-                    const isTeammate = topic.endsWith(myTeam) && data.clientId !== myClientId;
-                    const isOpponent = !topic.endsWith(myTeam) && myTeam !== 'Leiding';
+                    const topicSuffix = topic.startsWith(TOPIC_PREFIX) ? topic.substring(TOPIC_PREFIX.length) : "";
+                    const isTeamTopic = topicSuffix === 'Groen' || topicSuffix === 'Geel';
+                    if (!isTeamTopic || !data || typeof data.state !== 'object') return;
 
                     if (myTeam === 'Leiding') {
-                        if (topic.endsWith('Groen') || topic.endsWith('Geel')) {
-                            const team = topic.endsWith('Groen') ? 'Groen' : 'Geel';
-                            leidingState[team] = data.state || {};
-                            updateScoreDisplay();
-                            renderGrid();
-                        }
-                    } else if (isOpponent) {
+                        leidingState[topicSuffix] = normalizeState(data.state);
+                        updateScoreDisplay();
+                        renderGrid();
+                    } else if (topicSuffix !== myTeam) {
                         // Received Opponent's State
-                        opponentState = data.state || {};
+                        opponentState = normalizeState(data.state);
                         let oppScore = 0;
                         photos.forEach(p => {
                             if (opponentState[p.id]) oppScore += p.points;
@@ -778,17 +844,18 @@
                         opponentScore = oppScore;
                         updateScoreDisplay();
                         renderGrid(); 
-                    } else if (isTeammate) {
+                    } else if (data.clientId !== myClientId) {
                         // Received State from Teammate
+                        const incomingState = normalizeState(data.state);
                         let changed = false;
-                        for (const key in data.state) {
-                            if (data.state[key] && !state[key]) {
-                                state[key] = data.state[key];
+                        for (const key in incomingState) {
+                            if (state[key] !== incomingState[key]) {
+                                state[key] = incomingState[key];
                                 changed = true;
                             }
                         }
                         if (changed) {
-                            localStorage.setItem('groetsGreunState', JSON.stringify(state));
+                            saveStateForTeam();
                             renderGrid();
                             updateScore();
                         }
@@ -800,24 +867,27 @@
         }
 
         function publishState() {
-            if (mqttClient && mqttClient.connected && myTeam) {
+            if (mqttClient && mqttClient.connected && myTeam && myTeam !== 'Leiding') {
                 const payload = JSON.stringify({
                     team: myTeam,
                     clientId: myClientId,
-                    state: state
+                    timestamp: Date.now(),
+                    state: normalizeState(state)
                 });
-                // Only Leiding uses retain to broadcast authoritative state if needed
-                // Teams don't retain to avoid stale state issues
-                mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: myTeam === 'Leiding' });
+                mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: true });
             }
         }
 
         function selectTeam(teamName) {
             myTeam = teamName;
-            localStorage.setItem('groetsGreunTeam', myTeam);
+            localStorage.setItem(STORAGE_KEYS.team, myTeam);
+            state = {};
+            saveStateForTeam();
+            opponentState = {};
+            opponentScore = 0;
             
             startTime = Date.now();
-            localStorage.setItem('groetsGreunStart', startTime);
+            localStorage.setItem(STORAGE_KEYS.start, startTime);
             
             document.getElementById('intro-screen').style.display = 'none';
             document.getElementById('game-screen').style.display = 'block';
@@ -830,12 +900,13 @@
 
         function selectLeiding() {
             myTeam = 'Leiding';
-            localStorage.setItem('groetsGreunTeam', 'Leiding');
+            localStorage.setItem(STORAGE_KEYS.team, 'Leiding');
+            state = {};
             
             // Leiding doesn't start their own game, just watches
             if (!startTime) {
                 startTime = Date.now();
-                localStorage.setItem('groetsGreunStart', startTime);
+                localStorage.setItem(STORAGE_KEYS.start, startTime);
             }
 
             document.getElementById('intro-screen').style.display = 'none';
@@ -901,7 +972,7 @@
 
         function toggleOpponentVisibility(visible) {
             showOpponentProgress = visible;
-            localStorage.setItem('groetsGreunShowOpp', visible);
+            localStorage.setItem(STORAGE_KEYS.showOpp, visible);
             renderGrid();
         }
 
@@ -1007,9 +1078,7 @@
 
         function confirmLocalReset() {
             if(confirm("Wil je dit spel verlaten en terug naar het beginscherm? Je voortgang op dit toestel wordt gewist!")) {
-                localStorage.removeItem('groetsGreunState');
-                localStorage.removeItem('groetsGreunStart');
-                localStorage.removeItem('groetsGreunTeam');
+                clearGameLocalData();
                 location.reload();
             }
         }
@@ -1026,7 +1095,7 @@
                 state[id] = false;
             }
             
-            localStorage.setItem('groetsGreunState', JSON.stringify(state));
+            saveStateForTeam();
             renderGrid();
             updateScore();
             publishState(); // Broadcast the new state to teammates and opponents
@@ -1062,7 +1131,7 @@
             const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
 
             document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
-            document.getElementById('opp-team-score').innerText = `${oppDisplay}: ${opponentScore} pt`;
+            document.getElementById('opp-team-score').innerText = `${oppDisplay}: verborgen`;
         }
 
         function startTimerInterval() {
@@ -1160,17 +1229,18 @@
         function resetGame() {
             if(confirm("Weet je zeker dat je het hele spel wilt resetten? Iedereen wordt teruggestuurd naar het beginscherm!")) {
                 // Clear local storage
-                localStorage.removeItem('groetsGreunState');
-                localStorage.removeItem('groetsGreunStart');
-                localStorage.removeItem('groetsGreunTeam');
+                clearGameLocalData();
                 
                 if (mqttClient) {
+                    const resetTimestamp = Date.now();
+
                     // Clear retained messages to reset the broker for a new game
-                    mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {} }), { retain: true });
-                    mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {} }), { retain: true });
+                    mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {}, timestamp: resetTimestamp }), { retain: true });
+                    mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp }), { retain: true });
                     
-                    // Broadcast reset to all clients (with retain to ensure everyone gets it)
-                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload' }), { retain: true });
+                    // Ensure no stale retained reset event remains, then send a transient reset event.
+                    mqttClient.publish(TOPIC_PREFIX + 'reset', '', { retain: true });
+                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload', timestamp: resetTimestamp }), { retain: false });
                     
                     // Longer delay to ensure message is sent
                     setTimeout(() => {
