@@ -621,6 +621,7 @@
         let opponentState = {};
         let opponentScore = 0;
         let leidingState = { 'Groen': {}, 'Geel': {} };
+        let lastResetTime = 0;
 
         function getRelativeTime(timestamp) {
             if (!timestamp) return "";
@@ -738,9 +739,15 @@
                         return;
                     }
                     
-                    if (topic.includes('/reset')) {
-                        console.log("Global reset received, reloading...");
-                        location.reload();
+                    if (topic.endsWith('/reset')) {
+                        // Only reload if this is a fresh reset (transient event)
+                        // We check timestamp to prevent immediate loop if message was retained
+                        const resetTime = data.timestamp || 0;
+                        if (resetTime > lastResetTime) {
+                            console.log("Global reset received, reloading...");
+                            lastResetTime = resetTime;
+                            location.reload();
+                        }
                         return;
                     }
 
@@ -751,35 +758,35 @@
                         return;
                     }
 
+                    const isTeammate = topic.endsWith(myTeam) && data.clientId !== myClientId;
+                    const isOpponent = !topic.endsWith(myTeam) && myTeam !== 'Leiding';
+
                     if (myTeam === 'Leiding') {
-                        // Leiding tracks everything
-                        if (data.team === 'Groen' || data.team === 'Geel') {
-                            leidingState[data.team] = data.state || {};
+                        if (topic.endsWith('Groen') || topic.endsWith('Geel')) {
+                            const team = topic.endsWith('Groen') ? 'Groen' : 'Geel';
+                            leidingState[team] = data.state || {};
                             updateScoreDisplay();
                             renderGrid();
                         }
-                    } else if (data.team !== myTeam) {
+                    } else if (isOpponent) {
                         // Received Opponent's State
                         opponentState = data.state || {};
                         let oppScore = 0;
                         photos.forEach(p => {
-                            if (opponentState[p.id]) {
-                                oppScore += p.points;
-                            }
+                            if (opponentState[p.id]) oppScore += p.points;
                         });
                         opponentScore = oppScore;
                         updateScoreDisplay();
-                        renderGrid(); // Refresh to show opponent badges
-                    } else if (data.clientId !== myClientId) {
-                        // Received State from Teammate (different phone, same team)
+                        renderGrid(); 
+                    } else if (isTeammate) {
+                        // Received State from Teammate
                         let changed = false;
                         for (const key in data.state) {
                             if (data.state[key] && !state[key]) {
-                                state[key] = data.state[key]; // Store value (timestamp or true)
+                                state[key] = data.state[key];
                                 changed = true;
                             }
                         }
-                        // Merge and render if they found something we didn't have yet
                         if (changed) {
                             localStorage.setItem('groetsGreunState', JSON.stringify(state));
                             renderGrid();
@@ -799,8 +806,9 @@
                     clientId: myClientId,
                     state: state
                 });
-                // Using retain: true so the broker holds the latest score for any new connection
-                mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: true });
+                // Only Leiding uses retain to broadcast authoritative state if needed
+                // Teams don't retain to avoid stale state issues
+                mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: myTeam === 'Leiding' });
             }
         }
 
