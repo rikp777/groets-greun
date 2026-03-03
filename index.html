@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Groets Greun Fototocht</title>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
         :root {
-            --primary: #2e7d32; /* Groets Greun! */
+            --primary: #2e7d32;
             --primary-light: #4caf50;
             --secondary: #ffc107;
             --bg: #f0fdf4;
@@ -20,14 +21,13 @@
             padding: 0;
             background-color: var(--bg);
             color: var(--text);
-            padding-bottom: 80px; /* Space for sticky footer */
+            padding-bottom: 80px;
         }
 
-        /* Top Bar */
         #app-header {
             background-color: var(--primary);
             color: white;
-            padding: 15px 20px;
+            padding: 10px 15px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -37,15 +37,20 @@
             box-shadow: 0 2px 10px rgba(0,0,0,0.2);
         }
 
-        #app-header h1 {
-            margin: 0;
-            font-size: 1.2em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        .score-board {
+            display: flex;
+            flex-direction: column;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .score-board span {
+            padding: 2px 0;
         }
 
         .stats {
             display: flex;
+            align-items: center;
             gap: 15px;
             font-weight: bold;
             font-size: 1.1em;
@@ -57,7 +62,6 @@
             border-radius: 5px;
         }
 
-        /* Intro Screen */
         #intro-screen {
             padding: 30px 20px;
             text-align: center;
@@ -96,17 +100,13 @@
             transition: transform 0.1s;
             width: 100%;
             max-width: 300px;
+            margin-bottom: 10px;
         }
 
-        .btn:active {
-            transform: scale(0.95);
-        }
+        .btn-geel { background-color: #fbc02d; color: #000; box-shadow: 0 4px 6px rgba(251, 192, 45, 0.3); }
+        .btn:active { transform: scale(0.95); }
 
-        /* Game Grid */
-        #game-screen {
-            display: none;
-            padding: 15px;
-        }
+        #game-screen { display: none; padding: 15px; }
 
         .grid {
             display: grid;
@@ -127,22 +127,9 @@
             flex-direction: column;
         }
 
-        .photo-card.found {
-            border-color: var(--primary);
-            opacity: 0.8;
-            transform: scale(0.98);
-        }
-
-        .photo-card img {
-            width: 100%;
-            height: 140px;
-            object-fit: cover;
-            pointer-events: none;
-        }
-
-        .photo-card.found img {
-            filter: grayscale(80%);
-        }
+        .photo-card.found { border-color: var(--primary); opacity: 0.8; transform: scale(0.98); }
+        .photo-card img { width: 100%; height: 140px; object-fit: cover; pointer-events: none; }
+        .photo-card.found img { filter: grayscale(80%); }
 
         .points-badge {
             position: absolute;
@@ -194,17 +181,11 @@
             100% { transform: translate(-50%, -50%) rotate(-15deg) scale(1); opacity: 1; }
         }
 
-        .reset-btn {
-            background: #dc3545;
-            margin-top: 40px;
-            font-size: 1em;
-            padding: 10px 20px;
-        }
+        .reset-btn { background: #dc3545; margin-top: 40px; font-size: 1em; padding: 10px 20px; }
 
-        /* Modal / Zoom Styles */
         .zoom-btn {
             position: absolute;
-            bottom: 60px; /* Above the label */
+            bottom: 60px;
             right: 8px;
             background: rgba(255,255,255,0.8);
             width: 35px;
@@ -250,15 +231,30 @@
             cursor: pointer;
             z-index: 2010;
         }
+        
+        .sync-indicator {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            background: #dc3545;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+        .sync-indicator.connected { background: #28a745; }
 
     </style>
 </head>
 <body>
 
     <div id="app-header">
-        <h1>Groets Greun</h1>
+        <div class="score-board">
+            <span id="my-team-score">Wij: 0 pt</span>
+            <span id="opp-team-score" style="color: #ffd54f;">Zij: 0 pt</span>
+        </div>
         <div class="stats">
-            <div id="score-display">0 pt</div>
             <div id="timer">75:00</div>
         </div>
     </div>
@@ -274,7 +270,7 @@
                 <li>Zoek de locatie op de foto.</li>
                 <li>Maak een <strong>groepsfoto</strong> waar jullie allemaal op staan.</li>
                 <li>Stuur de foto via WhatsApp naar de leiding.</li>
-                <li>Klik op de foto in deze app om hem af te vinken!</li>
+                <li>Klik op de foto in de app om hem af te vinken! De scores worden live gedeeld!</li>
             </ol>
         </div>
 
@@ -282,7 +278,11 @@
             WhatsApp foto's naar:<br><span style="font-size: 1.3em;">06 13 31 20 09</span>
         </div>
 
-        <button class="btn" onclick="startGame()">START DE TOCHT!</button>
+        <div id="team-selector">
+            <p><strong>Kies je Team om te starten:</strong></p>
+            <button class="btn" onclick="selectTeam('Groen')">TEAM GROEN</button>
+            <button class="btn btn-geel" onclick="selectTeam('Geel')">TEAM GEEL</button>
+        </div>
     </div>
 
     <!-- Game Screen -->
@@ -301,6 +301,9 @@
         <span id="close-modal" onclick="closeModal(event)">&times;</span>
         <img id="modal-img" src="" alt="Fullscreen image" onclick="event.stopPropagation()">
     </div>
+    
+    <!-- Connection Indicator -->
+    <div id="sync-indicator" class="sync-indicator" title="Verbinding met andere telefoons"></div>
 
     <script>
         const photos = [
@@ -328,23 +331,31 @@
         const TOTAL_MINUTES = 75;
         let state = JSON.parse(localStorage.getItem('groetsGreunState')) || {};
         let startTime = localStorage.getItem('groetsGreunStart');
+        let myTeam = localStorage.getItem('groetsGreunTeam');
         let timerInterval;
 
-        // Pinch-Zoom State
-        let currentScale = 1;
-        let initialDist = 0;
+        // --- Network Sync Setup ---
+        const MQTT_BROKER = "wss://test.mosquitto.org:8081/mqtt";
+        const TOPIC_PREFIX = "groetsgreun/score/panningen/";
+        const myClientId = Math.random().toString(36).substring(7);
+        let mqttClient = null;
+        let opponentScore = 0;
 
         function initApp() {
-            renderGrid();
-            if (startTime) {
+            if (startTime && myTeam) {
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
                 startTimerInterval();
+                initMQTT();
                 updateScore();
+                renderGrid();
             }
 
-            // Add Pinch Zoom Listeners
+            // Pinch Zoom Listeners
+            let currentScale = 1;
+            let initialDist = 0;
             const modalImg = document.getElementById('modal-img');
+            
             modalImg.addEventListener('touchstart', (e) => {
                 if (e.touches.length === 2) {
                     initialDist = Math.hypot(
@@ -367,9 +378,86 @@
                 }
             });
 
-            modalImg.addEventListener('touchend', () => {
-                initialDist = 0;
+            modalImg.addEventListener('touchend', () => { initialDist = 0; });
+        }
+
+        function initMQTT() {
+            if (!myTeam || mqttClient) return;
+            
+            mqttClient = mqtt.connect(MQTT_BROKER);
+            
+            mqttClient.on('connect', () => {
+                document.getElementById('sync-indicator').classList.add('connected');
+                // Subscribe to both teams' topics
+                mqttClient.subscribe(TOPIC_PREFIX + '#');
+                // Publish our current state for late joiners
+                publishState();
             });
+
+            mqttClient.on('disconnect', () => {
+                document.getElementById('sync-indicator').classList.remove('connected');
+            });
+
+            mqttClient.on('message', (topic, message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    
+                    if (data.team !== myTeam) {
+                        // Received Opponent's State
+                        let oppScore = 0;
+                        photos.forEach(p => {
+                            if (data.state[p.id]) oppScore += p.points;
+                        });
+                        opponentScore = oppScore;
+                        updateScoreDisplay();
+                    } else if (data.clientId !== myClientId) {
+                        // Received State from Teammate (different phone, same team)
+                        let changed = false;
+                        for (const key in data.state) {
+                            if (data.state[key] && !state[key]) {
+                                state[key] = true;
+                                changed = true;
+                            }
+                        }
+                        // Merge and render if they found something we didn't have yet
+                        if (changed) {
+                            localStorage.setItem('groetsGreunState', JSON.stringify(state));
+                            renderGrid();
+                            updateScore();
+                        }
+                    }
+                } catch (e) {
+                    console.error("Sync error", e);
+                }
+            });
+        }
+
+        function publishState() {
+            if (mqttClient && mqttClient.connected && myTeam) {
+                const payload = JSON.stringify({
+                    team: myTeam,
+                    clientId: myClientId,
+                    state: state
+                });
+                // Using retain: true so the broker holds the latest score for any new connection
+                mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: true });
+            }
+        }
+
+        function selectTeam(teamName) {
+            myTeam = teamName;
+            localStorage.setItem('groetsGreunTeam', myTeam);
+            
+            startTime = Date.now();
+            localStorage.setItem('groetsGreunStart', startTime);
+            
+            document.getElementById('intro-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'block';
+            
+            initMQTT();
+            startTimerInterval();
+            updateScore();
+            renderGrid();
         }
 
         function renderGrid() {
@@ -394,8 +482,7 @@
         }
 
         function openModal(src, event) {
-            event.stopPropagation(); // Don't trigger the "found" toggle
-            currentScale = 1;
+            event.stopPropagation();
             const modalImg = document.getElementById('modal-img');
             modalImg.src = src;
             modalImg.style.transform = 'scale(1)';
@@ -406,49 +493,49 @@
             document.getElementById('image-modal').style.display = 'none';
         }
 
-        function startGame() {
-            startTime = Date.now();
-            localStorage.setItem('groetsGreunStart', startTime);
-            document.getElementById('intro-screen').style.display = 'none';
-            document.getElementById('game-screen').style.display = 'block';
-            startTimerInterval();
-        }
-
         function togglePhoto(id) {
-            // Check if photo object exists
-            const photoData = photos.find(p => p.id === id);
-            
-            // If turning ON (was false/undefined)
             if (!state[id]) {
-                // Confirm they sent the photo
                 if(confirm("Hebben jullie de groepsfoto naar de leiding ge-WhatsAppt?")) {
                     state[id] = true;
                     triggerConfetti();
                 } else {
-                    return; // Abort
+                    return;
                 }
             } else {
-                // Turning OFF
                 state[id] = false;
             }
             
             localStorage.setItem('groetsGreunState', JSON.stringify(state));
             renderGrid();
             updateScore();
+            publishState(); // Broadcast the new state to teammates and opponents
         }
 
         function updateScore() {
-            let score = 0;
+            let myScore = 0;
             photos.forEach(p => {
-                if (state[p.id]) score += p.points;
+                if (state[p.id]) myScore += p.points;
             });
-            document.getElementById('score-display').innerText = score + ' pt';
+            updateScoreDisplay(myScore);
+        }
+
+        function updateScoreDisplay(myScore = null) {
+            if (myScore === null) {
+                myScore = 0;
+                photos.forEach(p => { if (state[p.id]) myScore += p.points; });
+            }
+            
+            const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
+            const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
+
+            document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
+            document.getElementById('opp-team-score').innerText = `${oppDisplay}: ${opponentScore} pt`;
         }
 
         function startTimerInterval() {
             clearInterval(timerInterval);
             timerInterval = setInterval(tickTimer, 1000);
-            tickTimer(); // run immediately
+            tickTimer();
         }
 
         function tickTimer() {
@@ -460,7 +547,7 @@
 
             if (remaining <= 0) {
                 document.getElementById('timer').innerText = "00:00";
-                document.getElementById('timer').style.backgroundColor = "#dc3545"; // Red
+                document.getElementById('timer').style.backgroundColor = "#dc3545";
                 document.getElementById('timer').style.color = "white";
                 return;
             }
@@ -469,9 +556,8 @@
             const s = Math.floor((remaining % 60000) / 1000);
             document.getElementById('timer').innerText = `${m}:${s < 10 ? '0' : ''}${s}`;
             
-            // Warning color in last 5 minutes
             if (m < 5) {
-                document.getElementById('timer').style.backgroundColor = "#ffc107"; // Yellow
+                document.getElementById('timer').style.backgroundColor = "#ffc107";
                 document.getElementById('timer').style.color = "#000";
             }
         }
@@ -481,24 +567,9 @@
             var end = Date.now() + duration;
 
             (function frame() {
-                confetti({
-                    particleCount: 5,
-                    angle: 60,
-                    spread: 55,
-                    origin: { x: 0 },
-                    colors: ['#2e7d32', '#4caf50', '#ffc107']
-                });
-                confetti({
-                    particleCount: 5,
-                    angle: 120,
-                    spread: 55,
-                    origin: { x: 1 },
-                    colors: ['#2e7d32', '#4caf50', '#ffc107']
-                });
-
-                if (Date.now() < end) {
-                    requestAnimationFrame(frame);
-                }
+                confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 }, colors: ['#2e7d32', '#4caf50', '#ffc107'] });
+                confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 }, colors: ['#2e7d32', '#4caf50', '#ffc107'] });
+                if (Date.now() < end) requestAnimationFrame(frame);
             }());
         }
 
@@ -506,20 +577,35 @@
             if(confirm("Weet je zeker dat je het hele spel wilt resetten? De tijd en alle punten gaan verloren!")) {
                 localStorage.removeItem('groetsGreunState');
                 localStorage.removeItem('groetsGreunStart');
+                localStorage.removeItem('groetsGreunTeam');
                 state = {};
                 startTime = null;
+                myTeam = null;
+                opponentScore = 0;
+                
+                if (mqttClient) {
+                    // Clear retained messages to reset the broker for a new game
+                    mqttClient.publish(TOPIC_PREFIX + 'Groen', '', { retain: true });
+                    mqttClient.publish(TOPIC_PREFIX + 'Geel', '', { retain: true });
+                    mqttClient.end();
+                    mqttClient = null;
+                }
+
                 clearInterval(timerInterval);
                 document.getElementById('timer').innerText = "75:00";
                 document.getElementById('timer').style.backgroundColor = "rgba(0,0,0,0.2)";
                 document.getElementById('timer').style.color = "white";
                 document.getElementById('intro-screen').style.display = 'block';
                 document.getElementById('game-screen').style.display = 'none';
-                updateScore();
-                renderGrid();
+                
+                document.getElementById('my-team-score').innerText = "Wij (Kies Team): 0 pt";
+                document.getElementById('opp-team-score').innerText = "Zij (Tegenstander): 0 pt";
+                
+                const grid = document.getElementById('photo-grid');
+                grid.innerHTML = '';
             }
         }
 
-        // Boot
         initApp();
 
     </script>
