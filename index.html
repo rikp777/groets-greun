@@ -702,28 +702,23 @@
         }
 
         function selectLeiding() {
-            const pass = prompt("Wachtwoord voor Leiding:");
-            if (pass === "gg2024") {
-                myTeam = 'Leiding';
-                localStorage.setItem('groetsGreunTeam', 'Leiding');
-                
-                // Leiding doesn't start their own game, just watches
-                if (!startTime) {
-                    startTime = Date.now();
-                    localStorage.setItem('groetsGreunStart', startTime);
-                }
-
-                document.getElementById('intro-screen').style.display = 'none';
-                document.getElementById('game-screen').style.display = 'block';
-                document.querySelector('.toggle-container').style.display = 'none';
-                
-                initMQTT();
-                startTimerInterval();
-                updateScoreDisplay();
-                renderGrid();
-            } else {
-                alert("Verkeerd wachtwoord!");
+            myTeam = 'Leiding';
+            localStorage.setItem('groetsGreunTeam', 'Leiding');
+            
+            // Leiding doesn't start their own game, just watches
+            if (!startTime) {
+                startTime = Date.now();
+                localStorage.setItem('groetsGreunStart', startTime);
             }
+
+            document.getElementById('intro-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'block';
+            document.querySelector('.toggle-container').style.display = 'none';
+            
+            initMQTT();
+            startTimerInterval();
+            updateScoreDisplay();
+            renderGrid();
         }
 
         function renderGrid() {
