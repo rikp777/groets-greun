@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Groets Greun Fototocht</title>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        :root {
+            --primary: #2e7d32; /* Groets Greun! */
+            --primary-light: #4caf50;
+            --secondary: #ffc107;
+            --bg: #f0fdf4;
+            --text: #333;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            padding-bottom: 80px; /* Space for sticky footer */
+        }
+
+        /* Top Bar */
+        #app-header {
+            background-color: var(--primary);
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        #app-header h1 {
+            margin: 0;
+            font-size: 1.2em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        #timer {
+            background: rgba(0,0,0,0.2);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        /* Intro Screen */
+        #intro-screen {
+            padding: 30px 20px;
+            text-align: center;
+            background: white;
+            margin: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        #intro-screen h2 {
+            color: var(--primary);
+            font-size: 2em;
+            margin-top: 0;
+        }
+
+        .whatsapp-box {
+            background: #e8f5e9;
+            border: 2px dashed var(--primary);
+            padding: 15px;
+            margin: 20px 0;
+            color: var(--primary);
+            font-weight: bold;
+            border-radius: 8px;
+        }
+
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.3em;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(46, 125, 50, 0.3);
+            transition: transform 0.1s;
+            width: 100%;
+            max-width: 300px;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Game Grid */
+        #game-screen {
+            display: none;
+            padding: 15px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .photo-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 3px solid transparent;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .photo-card.found {
+            border-color: var(--primary);
+            opacity: 0.8;
+            transform: scale(0.98);
+        }
+
+        .photo-card img {
+            width: 100%;
+            height: 140px;
+            object-fit: cover;
+            pointer-events: none;
+        }
+
+        .photo-card.found img {
+            filter: grayscale(80%);
+        }
+
+        .points-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--secondary);
+            color: #000;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9em;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .label {
+            padding: 12px 10px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1em;
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .found-stamp {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-15deg);
+            color: var(--primary);
+            border: 4px solid var(--primary);
+            padding: 5px 15px;
+            font-size: 1.5em;
+            font-weight: 900;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.9);
+            pointer-events: none;
+        }
+
+        .photo-card.found .found-stamp {
+            display: block;
+            animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes stamp {
+            0% { transform: translate(-50%, -50%) rotate(-15deg) scale(2); opacity: 0; }
+            100% { transform: translate(-50%, -50%) rotate(-15deg) scale(1); opacity: 1; }
+        }
+
+        .reset-btn {
+            background: #dc3545;
+            margin-top: 40px;
+            font-size: 1em;
+            padding: 10px 20px;
+        }
+
+        /* Modal / Zoom Styles */
+        .zoom-btn {
+            position: absolute;
+            bottom: 60px; /* Above the label */
+            right: 8px;
+            background: rgba(255,255,255,0.8);
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 5;
+        }
+
+        #image-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            justify-content: center;
+            align-items: center;
+        }
+
+        #modal-img {
+            max-width: 95%;
+            max-height: 95%;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255,255,255,0.2);
+        }
+
+        #close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="app-header">
+        <h1>Groets Greun</h1>
+        <div class="stats">
+            <div id="score-display">0 pt</div>
+            <div id="timer">75:00</div>
+        </div>
+    </div>
+
+    <!-- Intro Screen -->
+    <div id="intro-screen">
+        <h2>De Grote Fototocht!</h2>
+        <p>Jullie hebben <strong>1 uur en 15 minuten</strong> om zo veel mogelijk van deze plekken te vinden!</p>
+        
+        <div style="text-align: left; margin-bottom: 20px;">
+            <p><strong>SPELREGELS:</strong></p>
+            <ol>
+                <li>Zoek de locatie op de foto.</li>
+                <li>Maak een <strong>groepsfoto</strong> waar jullie allemaal op staan.</li>
+                <li>Stuur de foto via WhatsApp naar de leiding.</li>
+                <li>Klik op de foto in deze app om hem af te vinken!</li>
+            </ol>
+        </div>
+
+        <div class="whatsapp-box">
+            WhatsApp foto's naar:<br><span style="font-size: 1.3em;">06 13 31 20 09</span>
+        </div>
+
+        <button class="btn" onclick="startGame()">START DE TOCHT!</button>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="game-screen">
+        <div class="grid" id="photo-grid">
+            <!-- Cards generated by JS -->
+        </div>
+        
+        <div style="text-align: center;">
+            <button class="btn reset-btn" onclick="resetGame()">Spel Resetten</button>
+        </div>
+    </div>
+
+    <!-- Modal for Fullscreen Images -->
+    <div id="image-modal" onclick="closeModal()">
+        <span id="close-modal">&times;</span>
+        <img id="modal-img" src="" alt="Fullscreen image">
+    </div>
+
+    <script>
+        const photos = [
+            { id: 'beehive', points: 10, file: 'beehive.jpg', label: 'Huisje voor beestjes #1' },
+            { id: 'bench', points: 15, file: 'bench.jpg', label: 'De Mozaïekbank' },
+            { id: 'cheeseman', points: 20, file: 'cheeseman.jpg', label: 'De Kaasdragers' },
+            { id: 'church', points: 15, file: 'church.jpg', label: 'Het Plein' },
+            { id: 'cow', points: 25, file: 'cow.jpg', label: 'De Verstopte Koe' },
+            { id: 'dome', points: 20, file: 'dome.jpg', label: 'De Zilveren Koepel' },
+            { id: 'food', points: 5, file: 'food.jpg', label: 'Broodjes-stop' },
+            { id: 'gravity', points: 15, file: 'gravity.jpg', label: 'Street Art Kastje' },
+            { id: 'hive_two', points: 10, file: 'hive_two.jpg', label: 'Huisje voor beestjes #2' },
+            { id: 'house_of_the_future', points: 20, file: 'house_of_the_future.jpg', label: 'Huis van Morgen' },
+            { id: 'ice_cream', points: 15, file: 'ice_cream.jpg', label: 'Mega IJsje' },
+            { id: 'iron_man', points: 30, file: 'iron_man.jpg', label: 'De Steenhouwer' },
+            { id: 'iron_man_two', points: 30, file: 'iron_man_two.jpg', label: 'De Shopper' },
+            { id: 'ladder', points: 15, file: 'ladder.jpg', label: 'De Laddermuur' },
+            { id: 'rusty_board', points: 25, file: 'rusty_board.jpg', label: 'Het Gedicht' },
+            { id: 'shed', points: 15, file: 'shed.jpg', label: 'Het Paviljoen' },
+            { id: 'soccerfield', points: 10, file: 'soccerfield.jpg', label: 'Het Pannaveldje' },
+            { id: 'supermarkcard', points: 10, file: 'supermarkcard.jpg', label: 'Karretjes-garage' },
+            { id: 'woman', points: 20, file: 'woman.jpg', label: 'De Glimlach' }
+        ];
+
+        const TOTAL_MINUTES = 75;
+        let state = JSON.parse(localStorage.getItem('groetsGreunState')) || {};
+        let startTime = localStorage.getItem('groetsGreunStart');
+        let timerInterval;
+
+        function initApp() {
+            renderGrid();
+            if (startTime) {
+                document.getElementById('intro-screen').style.display = 'none';
+                document.getElementById('game-screen').style.display = 'block';
+                startTimerInterval();
+                updateScore();
+            }
+        }
+
+        function renderGrid() {
+            const grid = document.getElementById('photo-grid');
+            grid.innerHTML = '';
+            
+            photos.forEach(photo => {
+                const isFound = state[photo.id] === true;
+                const card = document.createElement('div');
+                card.className = `photo-card ${isFound ? 'found' : ''}`;
+                card.onclick = () => togglePhoto(photo.id);
+                
+                card.innerHTML = `
+                    <div class="points-badge">${photo.points} pt</div>
+                    <img src="pictures/${photo.file}" alt="${photo.label}">
+                    <div class="zoom-btn" onclick="openModal('pictures/${photo.file}', event)">🔍</div>
+                    <div class="label">${photo.label}</div>
+                    <div class="found-stamp">GEVONDEN</div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function openModal(src, event) {
+            event.stopPropagation(); // Don't trigger the "found" toggle
+            document.getElementById('modal-img').src = src;
+            document.getElementById('image-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('image-modal').style.display = 'none';
+        }
+
+        function startGame() {
+            startTime = Date.now();
+            localStorage.setItem('groetsGreunStart', startTime);
+            document.getElementById('intro-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'block';
+            startTimerInterval();
+        }
+
+        function togglePhoto(id) {
+            // Check if photo object exists
+            const photoData = photos.find(p => p.id === id);
+            
+            // If turning ON (was false/undefined)
+            if (!state[id]) {
+                // Confirm they sent the photo
+                if(confirm("Hebben jullie de groepsfoto naar de leiding ge-WhatsAppt?")) {
+                    state[id] = true;
+                    triggerConfetti();
+                } else {
+                    return; // Abort
+                }
+            } else {
+                // Turning OFF
+                state[id] = false;
+            }
+            
+            localStorage.setItem('groetsGreunState', JSON.stringify(state));
+            renderGrid();
+            updateScore();
+        }
+
+        function updateScore() {
+            let score = 0;
+            photos.forEach(p => {
+                if (state[p.id]) score += p.points;
+            });
+            document.getElementById('score-display').innerText = score + ' pt';
+        }
+
+        function startTimerInterval() {
+            clearInterval(timerInterval);
+            timerInterval = setInterval(tickTimer, 1000);
+            tickTimer(); // run immediately
+        }
+
+        function tickTimer() {
+            if (!startTime) return;
+            const now = Date.now();
+            const elapsed = now - parseInt(startTime);
+            const totalMs = TOTAL_MINUTES * 60 * 1000;
+            const remaining = totalMs - elapsed;
+
+            if (remaining <= 0) {
+                document.getElementById('timer').innerText = "00:00";
+                document.getElementById('timer').style.backgroundColor = "#dc3545"; // Red
+                document.getElementById('timer').style.color = "white";
+                return;
+            }
+
+            const m = Math.floor(remaining / 60000);
+            const s = Math.floor((remaining % 60000) / 1000);
+            document.getElementById('timer').innerText = `${m}:${s < 10 ? '0' : ''}${s}`;
+            
+            // Warning color in last 5 minutes
+            if (m < 5) {
+                document.getElementById('timer').style.backgroundColor = "#ffc107"; // Yellow
+                document.getElementById('timer').style.color = "#000";
+            }
+        }
+
+        function triggerConfetti() {
+            var duration = 2 * 1000;
+            var end = Date.now() + duration;
+
+            (function frame() {
+                confetti({
+                    particleCount: 5,
+                    angle: 60,
+                    spread: 55,
+                    origin: { x: 0 },
+                    colors: ['#2e7d32', '#4caf50', '#ffc107']
+                });
+                confetti({
+                    particleCount: 5,
+                    angle: 120,
+                    spread: 55,
+                    origin: { x: 1 },
+                    colors: ['#2e7d32', '#4caf50', '#ffc107']
+                });
+
+                if (Date.now() < end) {
+                    requestAnimationFrame(frame);
+                }
+            }());
+        }
+
+        function resetGame() {
+            if(confirm("Weet je zeker dat je het hele spel wilt resetten? De tijd en alle punten gaan verloren!")) {
+                localStorage.removeItem('groetsGreunState');
+                localStorage.removeItem('groetsGreunStart');
+                state = {};
+                startTime = null;
+                clearInterval(timerInterval);
+                document.getElementById('timer').innerText = "75:00";
+                document.getElementById('timer').style.backgroundColor = "rgba(0,0,0,0.2)";
+                document.getElementById('timer').style.color = "white";
+                document.getElementById('intro-screen').style.display = 'block';
+                document.getElementById('game-screen').style.display = 'none';
+                updateScore();
+                renderGrid();
+            }
+        }
+
+        // Boot
+        initApp();
+
+    </script>
+</body>
+</html>
