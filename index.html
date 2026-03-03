@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Groets Greun Fototocht</title>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
     <style>
@@ -236,6 +236,8 @@
             max-height: 95%;
             border-radius: 8px;
             box-shadow: 0 0 20px rgba(255,255,255,0.2);
+            transition: transform 0.1s ease-out;
+            touch-action: none;
         }
 
         #close-modal {
@@ -246,6 +248,7 @@
             font-size: 40px;
             font-weight: bold;
             cursor: pointer;
+            z-index: 2010;
         }
 
     </style>
@@ -294,9 +297,9 @@
     </div>
 
     <!-- Modal for Fullscreen Images -->
-    <div id="image-modal" onclick="closeModal()">
-        <span id="close-modal">&times;</span>
-        <img id="modal-img" src="" alt="Fullscreen image">
+    <div id="image-modal" onclick="closeModal(event)">
+        <span id="close-modal" onclick="closeModal(event)">&times;</span>
+        <img id="modal-img" src="" alt="Fullscreen image" onclick="event.stopPropagation()">
     </div>
 
     <script>
@@ -327,6 +330,10 @@
         let startTime = localStorage.getItem('groetsGreunStart');
         let timerInterval;
 
+        // Pinch-Zoom State
+        let currentScale = 1;
+        let initialDist = 0;
+
         function initApp() {
             renderGrid();
             if (startTime) {
@@ -335,6 +342,34 @@
                 startTimerInterval();
                 updateScore();
             }
+
+            // Add Pinch Zoom Listeners
+            const modalImg = document.getElementById('modal-img');
+            modalImg.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    initialDist = Math.hypot(
+                        e.touches[0].pageX - e.touches[1].pageX,
+                        e.touches[0].pageY - e.touches[1].pageY
+                    );
+                }
+            });
+
+            modalImg.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2 && initialDist > 0) {
+                    const dist = Math.hypot(
+                        e.touches[0].pageX - e.touches[1].pageX,
+                        e.touches[0].pageY - e.touches[1].pageY
+                    );
+                    const delta = dist / initialDist;
+                    currentScale = Math.min(Math.max(1, currentScale * delta), 4);
+                    modalImg.style.transform = `scale(${currentScale})`;
+                    initialDist = dist;
+                }
+            });
+
+            modalImg.addEventListener('touchend', () => {
+                initialDist = 0;
+            });
         }
 
         function renderGrid() {
@@ -360,11 +395,14 @@
 
         function openModal(src, event) {
             event.stopPropagation(); // Don't trigger the "found" toggle
-            document.getElementById('modal-img').src = src;
+            currentScale = 1;
+            const modalImg = document.getElementById('modal-img');
+            modalImg.src = src;
+            modalImg.style.transform = 'scale(1)';
             document.getElementById('image-modal').style.display = 'flex';
         }
 
-        function closeModal() {
+        function closeModal(event) {
             document.getElementById('image-modal').style.display = 'none';
         }
 
