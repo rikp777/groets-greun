@@ -192,3 +192,24 @@ test("race bonus points use unique claimed rounds", function () {
   assert.equal(logic.getRaceBonusPoints({ "0": 1111, "1": 2222 }, 15), 30);
   assert.equal(logic.getRaceBonusPoints({}, 15), 0);
 });
+
+test("streak bonus counts non-overlapping approved-photo streaks in time window", function () {
+  var base = 1_000_000;
+  var state = {
+    a: base + 10_000,
+    b: base + 120_000,
+    c: base + 300_000, // first streak (within 8 min)
+    d: base + 1_200_000,
+    e: base + 1_240_000,
+    f: base + 1_270_000 // second streak
+  };
+
+  var stats = logic.getStreakBonusStats(state, {
+    required: 3,
+    windowMs: 8 * 60 * 1000,
+    bonusPerStreak: 10
+  });
+
+  assert.equal(stats.streakCount, 2);
+  assert.equal(stats.bonusPoints, 20);
+});

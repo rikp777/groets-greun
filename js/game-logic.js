@@ -125,6 +125,41 @@ function getRaceBonusPoints(claims, bonusPerClaim) {
   return Object.keys(claims).length * points;
 }
 
+function getStreakBonusStats(state, options) {
+  var required = Number((options && options.required) || 0);
+  var windowMs = Number((options && options.windowMs) || 0);
+  var bonusPerStreak = Number((options && options.bonusPerStreak) || 0);
+  if (required <= 0 || windowMs <= 0 || bonusPerStreak <= 0) {
+    return { streakCount: 0, bonusPoints: 0 };
+  }
+
+  var timestamps = [];
+  var input = state && typeof state === "object" ? state : {};
+  var keys = Object.keys(input);
+  for (var k = 0; k < keys.length; k += 1) {
+    var val = input[keys[k]];
+    if (typeof val === "number" && val > 0) timestamps.push(val);
+  }
+  timestamps.sort(function (a, b) { return a - b; });
+
+  var streakCount = 0;
+  var i = 0;
+  while (i + required - 1 < timestamps.length) {
+    var j = i + required - 1;
+    if ((timestamps[j] - timestamps[i]) <= windowMs) {
+      streakCount += 1;
+      i += required;
+    } else {
+      i += 1;
+    }
+  }
+
+  return {
+    streakCount: streakCount,
+    bonusPoints: streakCount * bonusPerStreak
+  };
+}
+
 function getRaceChallengeForRound(startTime, round, challenges) {
   if (!Array.isArray(challenges) || challenges.length === 0) return "";
   var baseSeed = Number(startTime || 0) + (Number(round || 0) + 1) * 7919;
@@ -174,6 +209,7 @@ module.exports = {
   getOpponentRevealWindowStatus: getOpponentRevealWindowStatus,
   getOpponentScoreText: getOpponentScoreText,
   getRaceBonusPoints: getRaceBonusPoints,
+  getStreakBonusStats: getStreakBonusStats,
   getRaceChallengeForRound: getRaceChallengeForRound,
   getRaceMoment: getRaceMoment
 };

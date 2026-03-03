@@ -24,6 +24,12 @@ const TOTAL_MINUTES = 75;
         const RACE_WINDOW_MS = 2 * 60 * 1000; // challenge active for 2 minutes
         const OPP_SCORE_REVEAL_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
         const OPP_SCORE_REVEAL_WINDOW_MS = 60 * 1000; // visible for 1 minute
+        const STREAK_REQUIRED_APPROVALS = 3;
+        const STREAK_WINDOW_MS = 8 * 60 * 1000;
+        const STREAK_BONUS_POINTS = 10;
+        const PROOF_MAX_IMAGE_SIDE = 960;
+        const PROOF_IMAGE_QUALITY = 0.72;
+        const PROOF_MAX_DATA_URL_LENGTH = 550000;
         const RACE_CHALLENGES = [
             "Maak een creatieve teamselfie met iets roods.",
             "Doe een groepsfoto met iedereen springend in de lucht.",
@@ -61,6 +67,8 @@ const TOTAL_MINUTES = 75;
         const TOPIC_PREFIX = "groetsgreun/score/panningen/2024/";
         const TOPIC_APPROVED_PREFIX = TOPIC_PREFIX + 'approved/';
         const TOPIC_APPROVED_RACE_PREFIX = TOPIC_PREFIX + 'approvedRace/';
+        const TOPIC_PROOF_PREFIX = TOPIC_PREFIX + 'proof/';
+        const TOPIC_PROOF_SCORE_PREFIX = TOPIC_PREFIX + 'proofScore/';
         const GAME_START_TOPIC = TOPIC_PREFIX + 'gameStart';
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
@@ -74,6 +82,8 @@ const TOTAL_MINUTES = 75;
         let leidingMessageHistory = [];
         let approvedRaceClaims = { 'Groen': {}, 'Geel': {} };
         let leidingSentHistory = [];
+        let proofInboxByTeam = { 'Groen': [], 'Geel': [] };
+        let proofPointsByTeam = { 'Groen': {}, 'Geel': {} };
         function getTeamStateKey(team) {
             return `groetsGreunState_${team}`;
         }
@@ -88,6 +98,12 @@ const TOTAL_MINUTES = 75;
         }
         function getMessageHistoryKey(team) {
             return `${STORAGE_KEYS.messageHistoryPrefix}${team}`;
+        }
+        function getProofInboxKey(team) {
+            return `groetsGreunProofInbox_${team}`;
+        }
+        function getProofPointsKey(team) {
+            return `groetsGreunProofPoints_${team}`;
         }
 
         function normalizeState(rawState) {
@@ -204,6 +220,53 @@ const TOTAL_MINUTES = 75;
             return score;
         }
 
+        function getApprovalTimestamps(teamState) {
+            const timestamps = [];
+            if (!teamState || typeof teamState !== 'object') return timestamps;
+            Object.keys(teamState).forEach(key => {
+                const val = teamState[key];
+                if (typeof val === 'number' && val > 0) {
+                    timestamps.push(val);
+                }
+            });
+            return timestamps.sort((a, b) => a - b);
+        }
+
+        function getStreakBonusStats(teamState) {
+            const times = getApprovalTimestamps(teamState);
+            let streakCount = 0;
+            let i = 0;
+            while (i + STREAK_REQUIRED_APPROVALS - 1 < times.length) {
+                const j = i + STREAK_REQUIRED_APPROVALS - 1;
+                if ((times[j] - times[i]) <= STREAK_WINDOW_MS) {
+                    streakCount += 1;
+                    i += STREAK_REQUIRED_APPROVALS;
+                } else {
+                    i += 1;
+                }
+            }
+            return {
+                streakCount: streakCount,
+                bonusPoints: streakCount * STREAK_BONUS_POINTS
+            };
+        }
+
+        function getTeamScoreBreakdown(team) {
+            const photoPoints = getPointsFromState(approvedState[team] || {});
+            const racePoints = getRacePointsFromClaims(approvedRaceClaims[team] || {});
+            const streak = getStreakBonusStats(approvedState[team] || {});
+            const proofPoints = Object.values(normalizeProofPoints(proofPointsByTeam[team] || {}))
+                .reduce((sum, item) => sum + Number(item.points || 0), 0);
+            return {
+                photoPoints: photoPoints,
+                racePoints: racePoints,
+                streakCount: streak.streakCount,
+                streakPoints: streak.bonusPoints,
+                proofPoints: proofPoints,
+                total: photoPoints + racePoints + streak.bonusPoints + proofPoints
+            };
+        }
+
         function loadLeidingSentHistory() {
             let parsed = [];
             try {
@@ -232,6 +295,76 @@ const TOTAL_MINUTES = 75;
         function saveMessageHistory(team, history) {
             if (!team || team === 'Leiding') return;
             localStorage.setItem(getMessageHistoryKey(team), JSON.stringify(history.slice(0, 30)));
+        }
+
+        function normalizeProofItem(raw) {
+            if (!raw || typeof raw !== 'object') return null;
+            const team = raw.team === 'Groen' || raw.team === 'Geel' ? raw.team : '';
+            const proofId = String(raw.proofId || '');
+            const imageData = String(raw.imageData || '');
+            const timestamp = Number(raw.timestamp || 0);
+            if (!team || !proofId || !imageData || imageData.indexOf('data:image/') !== 0 || timestamp <= 0) return null;
+            return {
+                team: team,
+                proofId: proofId,
+                imageData: imageData,
+                timestamp: timestamp,
+                note: String(raw.note || ''),
+                senderId: String(raw.senderId || '')
+            };
+        }
+
+        function normalizeProofPoints(raw) {
+            const out = {};
+            if (!raw || typeof raw !== 'object') return out;
+            Object.keys(raw).forEach(key => {
+                const item = raw[key];
+                if (!item || typeof item !== 'object') return;
+                const points = Number(item.points || 0);
+                const timestamp = Number(item.timestamp || 0);
+                if (points > 0 && timestamp > 0) {
+                    out[String(key)] = {
+                        points: points,
+                        timestamp: timestamp,
+                        reason: String(item.reason || 'Bewijsfoto')
+                    };
+                }
+            });
+            return out;
+        }
+
+        function loadProofInbox(team) {
+            let parsed = [];
+            try {
+                parsed = JSON.parse(localStorage.getItem(getProofInboxKey(team)) || '[]') || [];
+            } catch (e) {
+                parsed = [];
+            }
+            if (!Array.isArray(parsed)) return [];
+            return parsed
+                .map(normalizeProofItem)
+                .filter(Boolean)
+                .sort((a, b) => b.timestamp - a.timestamp)
+                .slice(0, 40);
+        }
+
+        function saveProofInbox(team) {
+            const safe = Array.isArray(proofInboxByTeam[team]) ? proofInboxByTeam[team].slice(0, 40) : [];
+            localStorage.setItem(getProofInboxKey(team), JSON.stringify(safe));
+        }
+
+        function loadProofPoints(team) {
+            let parsed = {};
+            try {
+                parsed = JSON.parse(localStorage.getItem(getProofPointsKey(team)) || '{}') || {};
+            } catch (e) {
+                parsed = {};
+            }
+            return normalizeProofPoints(parsed);
+        }
+
+        function saveProofPoints(team) {
+            localStorage.setItem(getProofPointsKey(team), JSON.stringify(normalizeProofPoints(proofPointsByTeam[team] || {})));
         }
 
         function renderMessageHistory() {
@@ -265,6 +398,7 @@ const TOTAL_MINUTES = 75;
 
             const teamApproved = normalizeState(approvedState[myTeam] || {});
             const raceApproved = normalizeRaceClaims(approvedRaceClaims[myTeam] || {});
+            const proofApproved = normalizeProofPoints(proofPointsByTeam[myTeam] || {});
             const awarded = photos
                 .filter(photo => !!teamApproved[photo.id])
                 .map(photo => ({
@@ -274,8 +408,17 @@ const TOTAL_MINUTES = 75;
                     timestamp: typeof teamApproved[photo.id] === 'number' ? teamApproved[photo.id] : 0
                 }))
                 .sort((a, b) => b.timestamp - a.timestamp);
+            const proofAwarded = Object.keys(proofApproved)
+                .map(proofId => ({
+                    proofId: proofId,
+                    label: `Bewijs (${proofId.slice(0, 6)})`,
+                    points: Number(proofApproved[proofId].points || 0),
+                    timestamp: Number(proofApproved[proofId].timestamp || 0),
+                    reason: String(proofApproved[proofId].reason || 'Bewijsfoto')
+                }))
+                .sort((a, b) => b.timestamp - a.timestamp);
 
-            if (!awarded.length && !Object.keys(raceApproved).length) {
+            if (!awarded.length && !Object.keys(raceApproved).length && !proofAwarded.length) {
                 const empty = document.createElement('li');
                 empty.textContent = "Nog geen punten toegekend.";
                 list.appendChild(empty);
@@ -295,6 +438,12 @@ const TOTAL_MINUTES = 75;
                     li.innerHTML = `<span>Race Moment #${Number(roundKey) + 1}</span><strong>+${RACE_BONUS_POINTS}</strong>`;
                     list.appendChild(li);
                 });
+
+            proofAwarded.forEach(item => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${item.reason} ${item.label}</span><strong>+${item.points}</strong>`;
+                list.appendChild(li);
+            });
         }
 
         function renderLeidingSentHistory() {
@@ -346,6 +495,130 @@ const TOTAL_MINUTES = 75;
             });
 
             el.innerHTML = rows.length ? rows.join('') : "<span style='opacity:0.75;'>Nog geen race-claims ontvangen.</span>";
+        }
+
+        function renderProofInbox() {
+            const el = document.getElementById('proof-inbox-list');
+            if (!el || myTeam !== 'Leiding') return;
+
+            const rows = [];
+            ['Groen', 'Geel'].forEach(team => {
+                const inbox = Array.isArray(proofInboxByTeam[team]) ? proofInboxByTeam[team] : [];
+                const pointsMap = normalizeProofPoints(proofPointsByTeam[team] || {});
+                inbox.slice(0, 20).forEach(item => {
+                    const awarded = pointsMap[item.proofId];
+                    const when = new Date(item.timestamp || Date.now()).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+                    rows.push(
+                        `<div class="proof-item">
+                            <div><strong>${team}</strong> bewijs (${when})</div>
+                            <img src="${item.imageData}" alt="Bewijs ${team}">
+                            <div class="proof-actions">
+                                <button class="mini-btn" style="background:${awarded && awarded.points === 5 ? '#66bb6a' : '#ffca28'}; color:${awarded && awarded.points === 5 ? 'white' : 'black'};" onclick="setProofPoints('${team}','${item.proofId}',5,event)">+5</button>
+                                <button class="mini-btn" style="background:${awarded && awarded.points === 10 ? '#66bb6a' : '#ffca28'}; color:${awarded && awarded.points === 10 ? 'white' : 'black'};" onclick="setProofPoints('${team}','${item.proofId}',10,event)">+10</button>
+                                <button class="mini-btn" style="background:${awarded && awarded.points === 15 ? '#66bb6a' : '#ffca28'}; color:${awarded && awarded.points === 15 ? 'white' : 'black'};" onclick="setProofPoints('${team}','${item.proofId}',15,event)">+15</button>
+                                <button class="mini-btn" style="background:#ef5350; color:white;" onclick="setProofPoints('${team}','${item.proofId}',0,event)">Intrekken</button>
+                            </div>
+                        </div>`
+                    );
+                });
+            });
+            el.innerHTML = rows.length ? rows.join('') : "<span style='opacity:0.75;'>Nog geen bewijsfoto's ontvangen.</span>";
+        }
+
+        function publishProofPoints(team) {
+            if (!mqttClient || myTeam !== 'Leiding') return;
+            const payload = JSON.stringify({
+                team: team,
+                proofPoints: normalizeProofPoints(proofPointsByTeam[team] || {}),
+                timestamp: Date.now()
+            });
+            mqttClient.publish(TOPIC_PROOF_SCORE_PREFIX + team, payload, { retain: true, qos: 1 });
+        }
+
+        function setProofPoints(team, proofId, points, event) {
+            if (event) event.stopPropagation();
+            if (myTeam !== 'Leiding') return;
+            if (!proofPointsByTeam[team]) proofPointsByTeam[team] = {};
+            const id = String(proofId || '');
+            if (!id) return;
+
+            const amount = Number(points || 0);
+            if (amount <= 0) {
+                delete proofPointsByTeam[team][id];
+            } else {
+                proofPointsByTeam[team][id] = {
+                    points: amount,
+                    timestamp: Date.now(),
+                    reason: 'Bewijsfoto'
+                };
+            }
+
+            saveProofPoints(team);
+            publishProofPoints(team);
+            updateScoreDisplay();
+            renderAssignedPointsList();
+            renderProofInbox();
+        }
+
+        function setProofStatus(message, isError = false) {
+            const el = document.getElementById('proof-upload-status');
+            if (!el) return;
+            el.style.color = isError ? '#b71c1c' : '#2e7d32';
+            el.innerText = String(message || '');
+        }
+
+        function resizeImageFile(file, callback) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const img = new Image();
+                img.onload = () => {
+                    const ratio = Math.min(PROOF_MAX_IMAGE_SIDE / img.width, PROOF_MAX_IMAGE_SIDE / img.height, 1);
+                    const width = Math.max(1, Math.round(img.width * ratio));
+                    const height = Math.max(1, Math.round(img.height * ratio));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', PROOF_IMAGE_QUALITY);
+                    callback(dataUrl);
+                };
+                img.onerror = () => callback('');
+                img.src = String(reader.result || '');
+            };
+            reader.onerror = () => callback('');
+            reader.readAsDataURL(file);
+        }
+
+        function sendProofUpload() {
+            if (myTeam !== 'Groen' && myTeam !== 'Geel') return;
+            if (!mqttClient || !mqttClient.connected) {
+                setProofStatus("Geen verbinding. Probeer opnieuw als sync groen is.", true);
+                return;
+            }
+            const input = document.getElementById('proof-file');
+            if (!input || !input.files || !input.files[0]) {
+                setProofStatus("Kies eerst een foto om te uploaden.", true);
+                return;
+            }
+            const file = input.files[0];
+            setProofStatus("Bewijsfoto wordt verwerkt...");
+            resizeImageFile(file, (dataUrl) => {
+                if (!dataUrl || dataUrl.length > PROOF_MAX_DATA_URL_LENGTH) {
+                    setProofStatus("Foto is te groot. Kies een kleinere foto.", true);
+                    return;
+                }
+                const payload = {
+                    team: myTeam,
+                    proofId: `${myTeam}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                    imageData: dataUrl,
+                    timestamp: Date.now(),
+                    senderId: myClientId
+                };
+                mqttClient.publish(TOPIC_PROOF_PREFIX + myTeam, JSON.stringify(payload), { retain: false, qos: 1 });
+                input.value = '';
+                setProofStatus("Bewijsfoto verstuurd naar leiding.");
+            });
         }
 
         function pushLeidingMessage(message, timestamp = Date.now()) {
@@ -419,6 +692,17 @@ const TOTAL_MINUTES = 75;
             };
         }
 
+        function updateStreakInfoUI() {
+            const infoEl = document.getElementById('streak-info-text');
+            if (!infoEl) return;
+            if (myTeam !== 'Groen' && myTeam !== 'Geel') {
+                infoEl.innerText = `Regel: ${STREAK_REQUIRED_APPROVALS} goedgekeurde foto's binnen ${Math.floor(STREAK_WINDOW_MS / 60000)} min = +${STREAK_BONUS_POINTS} pt bonus.`;
+                return;
+            }
+            const breakdown = getTeamScoreBreakdown(myTeam);
+            infoEl.innerText = `Regel: ${STREAK_REQUIRED_APPROVALS} goedgekeurde foto's binnen ${Math.floor(STREAK_WINDOW_MS / 60000)} min = +${STREAK_BONUS_POINTS} pt. Behaald: ${breakdown.streakCount}x (+${breakdown.streakPoints} pt).`;
+        }
+
         function getOpponentRaceStatus(round) {
             if (myTeam === 'Leiding') return '';
             const oppClaims = normalizeRaceClaims(opponentRaceClaims || {});
@@ -474,6 +758,10 @@ const TOTAL_MINUTES = 75;
             localStorage.removeItem(getTeamApprovedKey('Geel'));
             localStorage.removeItem(getTeamApprovedRaceKey('Groen'));
             localStorage.removeItem(getTeamApprovedRaceKey('Geel'));
+            localStorage.removeItem(getProofInboxKey('Groen'));
+            localStorage.removeItem(getProofInboxKey('Geel'));
+            localStorage.removeItem(getProofPointsKey('Groen'));
+            localStorage.removeItem(getProofPointsKey('Geel'));
             localStorage.removeItem(getMessageHistoryKey('Groen'));
             localStorage.removeItem(getMessageHistoryKey('Geel'));
             localStorage.removeItem(STORAGE_KEYS.sentHistory);
@@ -509,6 +797,11 @@ const TOTAL_MINUTES = 75;
             if (assignedBox) {
                 assignedBox.style.display = isLeiding ? 'none' : 'block';
             }
+
+            const proofUploadBox = document.getElementById('proof-upload-box');
+            if (proofUploadBox) {
+                proofUploadBox.style.display = isLeiding ? 'none' : 'block';
+            }
         }
 
         function getRelativeTime(timestamp) {
@@ -526,11 +819,15 @@ const TOTAL_MINUTES = 75;
                 approvedState['Geel'] = loadApprovedForTeam('Geel');
                 approvedRaceClaims['Groen'] = loadApprovedRaceForTeam('Groen');
                 approvedRaceClaims['Geel'] = loadApprovedRaceForTeam('Geel');
+                proofInboxByTeam['Groen'] = loadProofInbox('Groen');
+                proofInboxByTeam['Geel'] = loadProofInbox('Geel');
+                proofPointsByTeam['Groen'] = loadProofPoints('Groen');
+                proofPointsByTeam['Geel'] = loadProofPoints('Geel');
                 leidingMessageHistory = loadMessageHistory(myTeam);
                 leidingSentHistory = loadLeidingSentHistory();
                 if (myTeam === 'Groen' || myTeam === 'Geel') {
                     const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
-                    opponentScore = getPointsFromState(approvedState[myOppTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myOppTeam] || {});
+                    opponentScore = getTeamScoreBreakdown(myOppTeam).total;
                 }
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
@@ -548,6 +845,7 @@ const TOTAL_MINUTES = 75;
                 renderAssignedPointsList();
                 renderLeidingSentHistory();
                 renderRaceApprovalList();
+                renderProofInbox();
 
                 // Refresh relative times every 30 seconds
                 setInterval(renderGrid, 30000);
@@ -616,6 +914,8 @@ const TOTAL_MINUTES = 75;
                             publishApprovedState('Geel');
                             publishApprovedRaceState('Groen');
                             publishApprovedRaceState('Geel');
+                            publishProofPoints('Groen');
+                            publishProofPoints('Geel');
                         }
                     }
                 });
@@ -674,6 +974,46 @@ const TOTAL_MINUTES = 75;
                         return;
                     }
 
+                    if (topic.startsWith(TOPIC_PROOF_PREFIX)) {
+                        const team = topic.substring(TOPIC_PROOF_PREFIX.length);
+                        if (team === 'Groen' || team === 'Geel') {
+                            const proof = normalizeProofItem(data);
+                            if (proof) {
+                                const current = Array.isArray(proofInboxByTeam[team]) ? proofInboxByTeam[team] : [];
+                                const exists = current.some(item => item.proofId === proof.proofId);
+                                if (!exists) {
+                                    proofInboxByTeam[team] = [proof].concat(current).slice(0, 40);
+                                    saveProofInbox(team);
+                                    if (myTeam === 'Leiding') {
+                                        renderProofInbox();
+                                        showNotification(`Nieuw bewijs van Team ${team}`);
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    if (topic.startsWith(TOPIC_PROOF_SCORE_PREFIX)) {
+                        const team = topic.substring(TOPIC_PROOF_SCORE_PREFIX.length);
+                        if (team === 'Groen' || team === 'Geel') {
+                            proofPointsByTeam[team] = normalizeProofPoints(data.proofPoints || {});
+                            saveProofPoints(team);
+                            if (myTeam === team) {
+                                renderAssignedPointsList();
+                            }
+                            if (myTeam === 'Leiding') {
+                                renderProofInbox();
+                            }
+                            if (myTeam === 'Groen' || myTeam === 'Geel') {
+                                const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
+                                opponentScore = getTeamScoreBreakdown(myOppTeam).total;
+                            }
+                            updateScore();
+                        }
+                        return;
+                    }
+
                     if (topic.endsWith('/gameStart')) {
                         const syncedStart = Number(data.timestamp || 0);
                         if (syncedStart > 0 && Number(startTime || 0) !== syncedStart) {
@@ -711,7 +1051,7 @@ const TOTAL_MINUTES = 75;
                             }
                             const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
                             if (myTeam !== 'Leiding' && (team === myTeam || team === myOppTeam)) {
-                                opponentScore = getPointsFromState(approvedState[myOppTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myOppTeam] || {});
+                                opponentScore = getTeamScoreBreakdown(myOppTeam).total;
                             }
                             updateScore();
                             renderGrid();
@@ -727,7 +1067,7 @@ const TOTAL_MINUTES = 75;
                             saveApprovedRaceForTeam(team);
                             const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
                             if (myTeam !== 'Leiding') {
-                                opponentScore = getPointsFromState(approvedState[myOppTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myOppTeam] || {});
+                                opponentScore = getTeamScoreBreakdown(myOppTeam).total;
                             } else {
                                 renderRaceApprovalList();
                             }
@@ -752,7 +1092,7 @@ const TOTAL_MINUTES = 75;
                         opponentState = normalizeState(data.state);
                         opponentRaceClaims = normalizeRaceClaims(data.raceClaims || {});
                         const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
-                        opponentScore = getPointsFromState(approvedState[myOppTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myOppTeam] || {});
+                        opponentScore = getTeamScoreBreakdown(myOppTeam).total;
                         updateScoreDisplay();
                         renderGrid(); 
                     } else if (data.clientId !== myClientId) {
@@ -889,10 +1229,14 @@ const TOTAL_MINUTES = 75;
             approvedState['Geel'] = loadApprovedForTeam('Geel');
             approvedRaceClaims['Groen'] = loadApprovedRaceForTeam('Groen');
             approvedRaceClaims['Geel'] = loadApprovedRaceForTeam('Geel');
+            proofInboxByTeam['Groen'] = loadProofInbox('Groen');
+            proofInboxByTeam['Geel'] = loadProofInbox('Geel');
+            proofPointsByTeam['Groen'] = loadProofPoints('Groen');
+            proofPointsByTeam['Geel'] = loadProofPoints('Geel');
             leidingMessageHistory = loadMessageHistory(myTeam);
             opponentScore = 0;
             const myOppTeam = myTeam === 'Groen' ? 'Geel' : 'Groen';
-            opponentScore = getPointsFromState(approvedState[myOppTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myOppTeam] || {});
+            opponentScore = getTeamScoreBreakdown(myOppTeam).total;
             startTime = localStorage.getItem(STORAGE_KEYS.start);
             
             document.getElementById('intro-screen').style.display = 'none';
@@ -906,6 +1250,7 @@ const TOTAL_MINUTES = 75;
             renderMessageHistory();
             renderAssignedPointsList();
             renderRaceApprovalList();
+            renderProofInbox();
             applyRoleUi();
 
             if (!startTime) {
@@ -922,6 +1267,10 @@ const TOTAL_MINUTES = 75;
             approvedState['Geel'] = loadApprovedForTeam('Geel');
             approvedRaceClaims['Groen'] = loadApprovedRaceForTeam('Groen');
             approvedRaceClaims['Geel'] = loadApprovedRaceForTeam('Geel');
+            proofInboxByTeam['Groen'] = loadProofInbox('Groen');
+            proofInboxByTeam['Geel'] = loadProofInbox('Geel');
+            proofPointsByTeam['Groen'] = loadProofPoints('Groen');
+            proofPointsByTeam['Geel'] = loadProofPoints('Geel');
             leidingMessageHistory = [];
             leidingSentHistory = loadLeidingSentHistory();
             
@@ -941,6 +1290,7 @@ const TOTAL_MINUTES = 75;
             renderAssignedPointsList();
             renderLeidingSentHistory();
             renderRaceApprovalList();
+            renderProofInbox();
             applyRoleUi();
             publishGameStartWhenConnected(Number(startTime));
         }
@@ -1189,40 +1539,50 @@ const TOTAL_MINUTES = 75;
         function updateScore() {
             let myScore = 0;
             if (myTeam === 'Groen' || myTeam === 'Geel') {
-                myScore = getPointsFromState(approvedState[myTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myTeam] || {});
+                myScore = getTeamScoreBreakdown(myTeam).total;
             }
             updateScoreDisplay(myScore);
         }
 
         function updateScoreDisplay(myScore = null) {
             const revealEl = document.getElementById('opp-score-reveal-timer');
+            const streakHeaderEl = document.getElementById('streak-status');
 
             if (myTeam === 'Leiding') {
-                const groenScore = getPointsFromState(approvedState['Groen'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Groen'] || {});
-                const geelScore = getPointsFromState(approvedState['Geel'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Geel'] || {});
-                document.getElementById('my-team-score').innerText = `Team Groen: ${groenScore} pt`;
-                document.getElementById('opp-team-score').innerText = `Team Geel: ${geelScore} pt`;
+                const groen = getTeamScoreBreakdown('Groen');
+                const geel = getTeamScoreBreakdown('Geel');
+                document.getElementById('my-team-score').innerText = `Team Groen: ${groen.total} pt`;
+                document.getElementById('opp-team-score').innerText = `Team Geel: ${geel.total} pt`;
                 if (revealEl) revealEl.innerText = "";
+                if (streakHeaderEl) streakHeaderEl.innerText = "";
+                updateStreakInfoUI();
                 return;
             }
 
             if (myScore === null) {
-                myScore = getPointsFromState(approvedState[myTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myTeam] || {});
+                myScore = getTeamScoreBreakdown(myTeam).total;
             }
             
             const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
             const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
             const reveal = getOpponentScoreRevealState();
+            const myBreakdown = myTeam ? getTeamScoreBreakdown(myTeam) : { streakPoints: 0 };
 
             document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
             document.getElementById('opp-team-score').innerText = reveal.revealNow
                 ? `${oppDisplay}: ${opponentScore} pt`
                 : `${oppDisplay}: verborgen`;
+            if (streakHeaderEl) {
+                streakHeaderEl.innerText = myBreakdown.streakPoints > 0
+                    ? `Streak bonus: +${myBreakdown.streakPoints} pt`
+                    : `Streak bonus: 0 pt`;
+            }
             if (revealEl) {
                 revealEl.innerText = reveal.revealNow
                     ? `Tegenstander-score nog zichtbaar: ${formatClock(reveal.msLeftInReveal)}`
                     : `Tegenstander-score zichtbaar over: ${formatClock(reveal.msUntilReveal)}`;
             }
+            updateStreakInfoUI();
         }
 
         function startTimerInterval() {
@@ -1263,6 +1623,7 @@ const TOTAL_MINUTES = 75;
 
             if (myTeam !== 'Leiding') {
                 updateScoreDisplay();
+                updateStreakInfoUI();
             }
             updateRaceMomentUI();
         }
@@ -1273,10 +1634,10 @@ const TOTAL_MINUTES = 75;
             
             // Calculate scores based on current role
             if (myTeam === 'Leiding') {
-                groenScore = getPointsFromState(approvedState['Groen'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Groen'] || {});
-                geelScore = getPointsFromState(approvedState['Geel'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Geel'] || {});
+                groenScore = getTeamScoreBreakdown('Groen').total;
+                geelScore = getTeamScoreBreakdown('Geel').total;
             } else {
-                const myScore = getPointsFromState(approvedState[myTeam] || {}) + getRacePointsFromClaims(approvedRaceClaims[myTeam] || {});
+                const myScore = getTeamScoreBreakdown(myTeam).total;
                 
                 if (myTeam === 'Groen') {
                     groenScore = myScore;
@@ -1345,6 +1706,8 @@ const TOTAL_MINUTES = 75;
             mqttClient.publish(TOPIC_APPROVED_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
             mqttClient.publish(TOPIC_APPROVED_RACE_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', raceClaims: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
             mqttClient.publish(TOPIC_APPROVED_RACE_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', raceClaims: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
+            mqttClient.publish(TOPIC_PROOF_SCORE_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', proofPoints: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
+            mqttClient.publish(TOPIC_PROOF_SCORE_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', proofPoints: {}, timestamp: resetTimestamp }), { retain: true, qos: 1 });
 
             // Retained reset makes sure briefly disconnected clients still receive it.
             mqttClient.publish(TOPIC_PREFIX + 'reset', resetPayload, { retain: true, qos: 1 });
@@ -1391,8 +1754,10 @@ const TOTAL_MINUTES = 75;
             sendNotification,
             leidingTroll,
             claimRaceBonus,
+            sendProofUpload,
             toggleApproval,
             toggleRaceApproval,
+            setProofPoints,
             resetGame,
             openModal,
             closeModal,

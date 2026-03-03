@@ -14,6 +14,7 @@
         <div class="score-board">
             <span id="my-team-score">Wij: 0 pt</span>
             <span id="opp-team-score" style="color: #ffd54f;">Zij: 0 pt</span>
+            <span id="streak-status" class="score-hint">Streak bonus: 0 pt</span>
         </div>
         <div id="opp-score-reveal-timer" class="score-hint"></div>
         <div class="header-brand">
@@ -77,6 +78,11 @@
             </div>
 
             <div style="margin-top: 10px;">
+                <div style="font-weight: bold; margin-bottom: 6px; color:#a5d6a7;">Bewijs Inbox</div>
+                <div id="proof-inbox-list" style="font-size:0.85em; line-height:1.35;"></div>
+            </div>
+
+            <div style="margin-top: 10px;">
                 <div style="font-weight: bold; margin-bottom: 6px; color:#a5d6a7;">Verzonden Berichten</div>
                 <ul id="leiding-sent-list" style="list-style:none; margin:0; padding:0; max-height:120px; overflow-y:auto;"></ul>
             </div>
@@ -96,6 +102,21 @@
             <div id="race-moment-meta" class="meta"></div>
             <button id="race-claim-btn" onclick="claimRaceBonus()">CHALLENGE KLAAR</button>
             <div class="claim-warning">Klik hier pas nadat de foto naar de leiding is gestuurd, anders wordt deze afgekeurd.</div>
+        </div>
+
+        <div id="streak-box">
+            <div class="title">Streak Bonus</div>
+            <div id="streak-info-text">Regel: 3 goedgekeurde foto's binnen 8 min = +10 pt bonus.</div>
+        </div>
+
+        <div id="proof-upload-box">
+            <div class="title">Bewijs Uploaden</div>
+            <div class="meta">Upload hier een bewijsfoto voor de leiding. Leiding kan daarna punten toekennen.</div>
+            <div class="control-row">
+                <input type="file" id="proof-file" accept="image/*">
+                <button id="proof-send-btn" class="mini-btn" onclick="sendProofUpload()">VERSTUUR BEWIJS</button>
+            </div>
+            <div id="proof-upload-status" class="meta"></div>
         </div>
 
         <div id="assigned-points-box">
