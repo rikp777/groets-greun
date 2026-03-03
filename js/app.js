@@ -22,6 +22,8 @@ const TOTAL_MINUTES = 75;
         const RACE_BONUS_POINTS = 15;
         const RACE_INTERVAL_MS = 12 * 60 * 1000; // new challenge every 12 minutes
         const RACE_WINDOW_MS = 2 * 60 * 1000; // challenge active for 2 minutes
+        const OPP_SCORE_REVEAL_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
+        const OPP_SCORE_REVEAL_WINDOW_MS = 60 * 1000; // visible for 1 minute
         const RACE_CHALLENGES = [
             "Maak een creatieve teamselfie met iets roods.",
             "Doe een groepsfoto met iedereen springend in de lucht.",
@@ -392,6 +394,40 @@ const TOTAL_MINUTES = 75;
             return `${m}:${s < 10 ? '0' : ''}${s}`;
         }
 
+        function getOpponentScoreRevealState() {
+            if (myTeam === 'Leiding') {
+                return { revealNow: true, msUntilReveal: 0, msLeftInReveal: 0 };
+            }
+
+            const gameStart = Number(startTime || 0);
+            if (gameStart <= 0) {
+                return { revealNow: false, msUntilReveal: 0, msLeftInReveal: 0 };
+            }
+
+            const elapsed = Date.now() - gameStart;
+            if (elapsed < 0) {
+                return { revealNow: false, msUntilReveal: OPP_SCORE_REVEAL_INTERVAL_MS, msLeftInReveal: 0 };
+            }
+
+            const phaseMs = elapsed % OPP_SCORE_REVEAL_INTERVAL_MS;
+            const revealNow = phaseMs < OPP_SCORE_REVEAL_WINDOW_MS;
+
+            return {
+                revealNow: revealNow,
+                msUntilReveal: revealNow ? 0 : (OPP_SCORE_REVEAL_INTERVAL_MS - phaseMs),
+                msLeftInReveal: revealNow ? (OPP_SCORE_REVEAL_WINDOW_MS - phaseMs) : 0
+            };
+        }
+
+        function getOpponentRaceStatus(round) {
+            if (myTeam === 'Leiding') return '';
+            const oppClaims = normalizeRaceClaims(opponentRaceClaims || {});
+            const total = Object.keys(oppClaims).length;
+            if (total === 0) return 'Tegenstander race: nog geen claims';
+            if (round >= 0 && oppClaims[String(round)]) return 'Tegenstander heeft deze race al geclaimd';
+            return `Tegenstander race claims: ${total}`;
+        }
+
         function updateRaceMomentUI() {
             const box = document.getElementById('race-moment');
             const text = document.getElementById('race-moment-text');
@@ -413,7 +449,8 @@ const TOTAL_MINUTES = 75;
             if (moment.active) {
                 box.style.opacity = '1';
                 text.innerText = moment.challenge;
-                meta.innerText = `Nog ${formatClock(moment.msLeft)} | Extra team challenge`;
+                const oppStatus = getOpponentRaceStatus(moment.round);
+                meta.innerText = `Nog ${formatClock(moment.msLeft)} | Extra team challenge${oppStatus ? ` | ${oppStatus}` : ''}`;
                 btn.style.display = isLeiding ? 'none' : 'block';
                 btn.disabled = alreadyClaimed;
                 btn.innerText = alreadyClaimed ? 'CHALLENGE AL GEMELD' : 'CHALLENGE KLAAR';
@@ -421,7 +458,8 @@ const TOTAL_MINUTES = 75;
             } else {
                 box.style.opacity = '0.85';
                 text.innerText = "Volgend Race Moment komt eraan";
-                meta.innerText = `Over ${formatClock(moment.nextInMs)} start een 2-min challenge`;
+                const oppStatus = getOpponentRaceStatus(moment.round);
+                meta.innerText = `Over ${formatClock(moment.nextInMs)} start een 2-min challenge${oppStatus ? ` | ${oppStatus}` : ''}`;
                 btn.style.display = 'none';
             }
         }
@@ -655,12 +693,17 @@ const TOTAL_MINUTES = 75;
                             saveApprovedForTeam(team);
                             if (myTeam === team) {
                                 let claimUpdated = false;
-                                for (const key in approvedState[team]) {
-                                    if (approvedState[team][key] && !state[key]) {
-                                        state[key] = typeof approvedState[team][key] === 'number' ? approvedState[team][key] : Date.now();
+                                photos.forEach(photo => {
+                                    const key = photo.id;
+                                    const approvedVal = approvedState[team][key];
+                                    const nextVal = approvedVal
+                                        ? (typeof approvedVal === 'number' ? approvedVal : Date.now())
+                                        : false;
+                                    if (state[key] !== nextVal) {
+                                        state[key] = nextVal;
                                         claimUpdated = true;
                                     }
-                                }
+                                });
                                 if (claimUpdated) {
                                     saveStateForTeam();
                                     publishState();
@@ -917,7 +960,7 @@ const TOTAL_MINUTES = 75;
                 return;
             }
 
-            if (!confirm("Hebben jullie de Race Moment foto echt gemaakt?")) return;
+            if (!confirm("Hebben jullie de Race Moment foto al naar de leiding gestuurd? Zonder foto wordt deze challenge afgekeurd.")) return;
 
             raceClaims[roundKey] = Date.now();
             saveRaceClaimsForTeam();
@@ -1127,7 +1170,7 @@ const TOTAL_MINUTES = 75;
 
         function togglePhoto(id) {
             if (!state[id]) {
-                if(confirm("Hebben jullie de groepsfoto naar de leiding ge-WhatsAppt?")) {
+                if(confirm("Hebben jullie de groepsfoto al naar de leiding gestuurd? Zonder foto wordt deze claim afgekeurd.")) {
                     state[id] = Date.now();
                     triggerConfetti();
                 } else {
@@ -1152,11 +1195,14 @@ const TOTAL_MINUTES = 75;
         }
 
         function updateScoreDisplay(myScore = null) {
+            const revealEl = document.getElementById('opp-score-reveal-timer');
+
             if (myTeam === 'Leiding') {
                 const groenScore = getPointsFromState(approvedState['Groen'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Groen'] || {});
                 const geelScore = getPointsFromState(approvedState['Geel'] || {}) + getRacePointsFromClaims(approvedRaceClaims['Geel'] || {});
                 document.getElementById('my-team-score').innerText = `Team Groen: ${groenScore} pt`;
                 document.getElementById('opp-team-score').innerText = `Team Geel: ${geelScore} pt`;
+                if (revealEl) revealEl.innerText = "";
                 return;
             }
 
@@ -1166,9 +1212,17 @@ const TOTAL_MINUTES = 75;
             
             const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
             const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
+            const reveal = getOpponentScoreRevealState();
 
             document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
-            document.getElementById('opp-team-score').innerText = `${oppDisplay}: verborgen`;
+            document.getElementById('opp-team-score').innerText = reveal.revealNow
+                ? `${oppDisplay}: ${opponentScore} pt`
+                : `${oppDisplay}: verborgen`;
+            if (revealEl) {
+                revealEl.innerText = reveal.revealNow
+                    ? `Tegenstander-score nog zichtbaar: ${formatClock(reveal.msLeftInReveal)}`
+                    : `Tegenstander-score zichtbaar over: ${formatClock(reveal.msUntilReveal)}`;
+            }
         }
 
         function startTimerInterval() {

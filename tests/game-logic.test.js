@@ -125,6 +125,34 @@ test("opponent score is only revealed inside 10-minute windows", function () {
   }), true);
 });
 
+test("opponent reveal countdown reports next/open window timings", function () {
+  var start = 1_000_000;
+  var interval = 10 * 60 * 1000;
+  var windowMs = 60 * 1000;
+
+  var active = logic.getOpponentRevealWindowStatus({
+    myTeam: "Groen",
+    startTime: start,
+    now: start + 20 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs
+  });
+  assert.equal(active.revealNow, true);
+  assert.equal(active.msUntilReveal, 0);
+  assert.equal(active.msLeftInReveal, 40 * 1000);
+
+  var waiting = logic.getOpponentRevealWindowStatus({
+    myTeam: "Groen",
+    startTime: start,
+    now: start + 4 * 60 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs
+  });
+  assert.equal(waiting.revealNow, false);
+  assert.equal(waiting.msLeftInReveal, 0);
+  assert.equal(waiting.msUntilReveal, 6 * 60 * 1000);
+});
+
 test("opponent score text follows reveal state", function () {
   assert.equal(logic.getOpponentScoreText("Groen", 75, false), "Zij (Team Geel): verborgen");
   assert.equal(logic.getOpponentScoreText("Geel", 80, false), "Zij (Team Groen): verborgen");

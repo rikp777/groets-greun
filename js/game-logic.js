@@ -84,6 +84,32 @@ function shouldRevealOpponentScore(options) {
   return (elapsed % intervalMs) < windowMs;
 }
 
+function getOpponentRevealWindowStatus(options) {
+  var startTime = Number(options.startTime || 0);
+  var now = Number(options.now || 0);
+  var myTeam = options.myTeam;
+  var intervalMs = Number(options.intervalMs || 0);
+  var windowMs = Number(options.windowMs || 0);
+
+  if (myTeam === "Leiding" || startTime <= 0 || now <= 0 || intervalMs <= 0 || windowMs <= 0) {
+    return { revealNow: false, msUntilReveal: 0, msLeftInReveal: 0 };
+  }
+
+  var elapsed = now - startTime;
+  if (elapsed < 0) {
+    return { revealNow: false, msUntilReveal: intervalMs, msLeftInReveal: 0 };
+  }
+
+  var phaseMs = elapsed % intervalMs;
+  var revealNow = phaseMs < windowMs;
+
+  return {
+    revealNow: revealNow,
+    msUntilReveal: revealNow ? 0 : (intervalMs - phaseMs),
+    msLeftInReveal: revealNow ? (windowMs - phaseMs) : 0
+  };
+}
+
 function getOpponentScoreText(myTeam, opponentScore, revealNow) {
   var oppDisplay = myTeam === "Groen"
     ? "Zij (Team Geel)"
@@ -145,6 +171,7 @@ module.exports = {
   classifyMessage: classifyMessage,
   mergeTeammateState: mergeTeammateState,
   shouldRevealOpponentScore: shouldRevealOpponentScore,
+  getOpponentRevealWindowStatus: getOpponentRevealWindowStatus,
   getOpponentScoreText: getOpponentScoreText,
   getRaceBonusPoints: getRaceBonusPoints,
   getRaceChallengeForRound: getRaceChallengeForRound,
