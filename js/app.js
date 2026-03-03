@@ -1,7 +1,5 @@
 'use strict';
 
-const photos = window.photos || [];
-
 const TOTAL_MINUTES = 75;
         const STORAGE_KEYS = {
             stateLegacy: 'groetsGreunState',
@@ -30,7 +28,30 @@ const TOTAL_MINUTES = 75;
             "Maak een foto met een dier of dierensymbool.",
             "Maak een foto met een straatnaambord dat met 'B' begint.",
             "Maak een foto met iets dat rond is (fietswiel, klok, bord).",
-            "Maak een foto met een persoon die jullie een duim omhoog geeft."
+            "Maak een foto met een persoon die jullie een duim omhoog geeft.",
+            "Maak een teamfoto waar iedereen op 1 been staat.",
+            "Maak een foto met 3 verschillende soorten bladeren in beeld.",
+            "Maak een foto met iets dat glimt als een spiegel.",
+            "Maak een foto met een huisnummer waarin een 7 zit.",
+            "Maak een foto met een bankje en jullie hele team erop.",
+            "Maak een foto met iets geel en iets groen samen in beeld.",
+            "Maak een foto met een fietsbel of fietslamp in close-up.",
+            "Maak een foto met een kunstwerk of muurschildering.",
+            "Maak een foto met een winkelraam en jullie spiegeling.",
+            "Maak een foto waar iedereen dezelfde pose nadoet.",
+            "Maak een foto met een verkeersbord dat een richting aangeeft.",
+            "Maak een foto met iets dat begint met de letter S.",
+            "Maak een foto met een plant die hoger is dan 2 meter.",
+            "Maak een foto met een grappige team-piramide pose.",
+            "Maak een foto met 5 verschillende kleuren in 1 shot.",
+            "Maak een foto met iets dat oud of roestig lijkt.",
+            "Maak een foto met een hond OF een pootafdruk symbool.",
+            "Maak een foto waar iedereen wijst naar hetzelfde object.",
+            "Maak een foto met een deur in een opvallende kleur.",
+            "Maak een foto met een schaduw-spel van jullie team.",
+            "Maak een foto met een ronde tafel of rond object.",
+            "Maak een foto met een opvallend patroon (strepen, stippen, tegels).",
+            "Maak een foto met iets dat op een dier lijkt."
         ];
 
         // --- Network Sync Setup ---
@@ -917,6 +938,7 @@ const TOTAL_MINUTES = 75;
                 let badges = `<div class="points-badge">${photo.points} pt</div>`;
                 
                 if (myTeam === 'Leiding') {
+                    card.classList.add('leiding-view');
                     const groenVal = leidingState['Groen'][photo.id];
                     const geelVal = leidingState['Geel'][photo.id];
                     const groenApproved = approvedState['Groen'][photo.id];
@@ -939,7 +961,7 @@ const TOTAL_MINUTES = 75;
                     }
 
                     badges += `
-                        <div style="display:flex; gap:6px; margin-top:4px;">
+                        <div class="approval-row">
                             <button class="mini-btn" style="background:${groenApproved ? '#1b5e20' : '#4caf50'}; color:white; flex:1;" onclick="toggleApproval('Groen','${photo.id}', event)">
                                 ${groenApproved ? 'Groen OK' : '+ Groen'}
                             </button>
@@ -1305,5 +1327,22 @@ const TOTAL_MINUTES = 75;
                 }
             }
         }
+
+        // Ensure inline HTML onclick handlers can always resolve these functions.
+        Object.assign(window, {
+            selectTeam,
+            selectLeiding,
+            toggleOpponentVisibility,
+            sendTroll,
+            sendNotification,
+            leidingTroll,
+            claimRaceBonus,
+            toggleApproval,
+            toggleRaceApproval,
+            resetGame,
+            openModal,
+            closeModal,
+            confirmLocalReset
+        });
 
         initApp();

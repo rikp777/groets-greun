@@ -23,13 +23,14 @@
             min-height: 100vh;
         }
 
-        #app-header {
+#app-header {
             background: linear-gradient(120deg, var(--primary-dark), var(--primary));
             color: white;
-            padding: 12px 14px;
+            padding: 11px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             position: sticky;
             top: 0;
             z-index: 100;
@@ -37,24 +38,55 @@
             border-bottom: 1px solid rgba(255,255,255,0.18);
         }
 
-        .score-board {
+.score-board {
             display: flex;
             flex-direction: column;
             font-weight: bold;
-            font-size: 0.9em;
-        }
+            font-size: 0.86em;
+            min-width: 120px;
+}
 
         .score-board span {
             padding: 2px 0;
         }
 
-        .stats {
+.stats {
             display: flex;
             align-items: center;
             gap: 15px;
             font-weight: bold;
             font-size: 1.1em;
-        }
+            min-width: 84px;
+            justify-content: flex-end;
+}
+
+.header-brand {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.15;
+            flex: 1;
+}
+
+.brand-pill {
+            display: inline-block;
+            background: rgba(255,255,255,0.16);
+            border: 1px solid rgba(255,255,255,0.24);
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-weight: 900;
+            letter-spacing: 0.8px;
+            font-size: 0.72em;
+}
+
+.header-brand small {
+            margin-top: 3px;
+            font-size: 0.68em;
+            opacity: 0.88;
+            letter-spacing: 0.35px;
+}
 
         #timer {
             background: rgba(255,255,255,0.14);
@@ -112,12 +144,16 @@
         .btn-leiding { background: linear-gradient(120deg, #233b2b, #1a2f21); color: #f3fff7; }
         .btn:active { transform: scale(0.95); }
 
-        #game-screen {
+#game-screen {
             display: none;
             padding: 14px;
             max-width: 980px;
             margin: 0 auto;
-        }
+}
+
+#game-screen > * {
+            margin-bottom: 12px;
+}
 
         .grid {
             display: grid;
@@ -125,7 +161,7 @@
             gap: 14px;
         }
 
-        .photo-card {
+.photo-card {
             background: var(--card);
             border-radius: 16px;
             overflow: hidden;
@@ -133,10 +169,10 @@
             position: relative;
             cursor: pointer;
             transition: transform 0.18s ease, box-shadow 0.22s ease, border-color 0.2s ease;
-            border: 2px solid transparent;
+            border: 2px solid rgba(31,111,67,0.07);
             display: flex;
             flex-direction: column;
-        }
+}
 
         .photo-card:hover { transform: translateY(-2px); box-shadow: 0 12px 26px rgba(22, 39, 28, 0.16); }
         .photo-card.found { border-color: var(--primary-light); opacity: 0.86; transform: scale(0.985); }
@@ -157,9 +193,9 @@
             border: 1px solid rgba(0,0,0,0.08);
         }
 
-        .opp-badge {
+.opp-badge {
             display: block;
-            color: #f57f17;
+            color: #d68910;
             font-weight: bold;
             font-size: 0.75em;
             margin-bottom: 2px;
@@ -196,6 +232,10 @@
         .photo-card.found .found-stamp {
             display: block;
             animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        .photo-card.leiding-view .found-stamp {
+            display: none !important;
         }
 
         @keyframes stamp {
@@ -426,6 +466,15 @@
             box-shadow: inset 0 0 0 1px rgba(22,39,28,0.1);
         }
 
+        #troll-btn {
+            background: linear-gradient(120deg, #0f3b22, #1f6f43) !important;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        #troll-btn:hover {
+            box-shadow: 0 14px 24px rgba(15, 59, 34, 0.35);
+        }
+
         .switch {
             position: relative;
             display: inline-block;
@@ -544,11 +593,11 @@
         }
 
         /* Leiding Control Panel */
-        #leiding-controls {
+#leiding-controls {
             display: none;
             background: linear-gradient(135deg, #13281b, #1a3a28);
             color: white;
-            padding: 15px;
+            padding: 14px;
             margin-bottom: 15px;
             border-radius: 14px;
             box-shadow: 0 12px 24px rgba(0,0,0,0.2);
@@ -563,20 +612,45 @@
             flex-wrap: wrap;
         }
 
-        .control-group input {
+.control-group input {
             flex-grow: 1;
-            padding: 8px;
-            border-radius: 5px;
+            padding: 10px 11px;
+            border-radius: 9px;
             border: none;
-        }
+            outline: none;
+            background: rgba(255,255,255,0.92);
+            color: #163326;
+            box-shadow: inset 0 0 0 2px transparent;
+}
 
-        .mini-btn {
-            padding: 5px 10px;
-            border-radius: 5px;
+.control-group input:focus {
+            box-shadow: inset 0 0 0 2px rgba(49, 160, 95, 0.45);
+}
+
+.mini-btn {
+            padding: 7px 11px;
+            border-radius: 8px;
             border: none;
             font-weight: bold;
             cursor: pointer;
             font-size: 0.8em;
+            transition: transform 0.12s ease, filter 0.15s ease;
+}
+
+.mini-btn:hover {
+            filter: brightness(1.04);
+}
+
+        .mini-btn:active {
+            transform: scale(0.96);
+        }
+
+        .approval-row {
+            display: flex;
+            gap: 6px;
+            margin-top: 10px;
+            padding-top: 2px;
+            padding-right: 70px; /* keep clear of top-right points badge */
         }
 
         /* Notification Toast */
@@ -605,12 +679,13 @@
             #intro-screen { margin: 12px; }
         }
 
-        @media (max-width: 640px) {
+@media (max-width: 640px) {
             #app-header {
                 padding: 10px 11px;
                 gap: 10px;
             }
             .score-board { font-size: 0.82em; }
+            .header-brand small { display: none; }
             .stats { font-size: 1em; gap: 8px; }
             #timer { padding: 6px 10px; font-size: 0.95em; }
             #game-screen { padding: 10px; }
@@ -626,8 +701,9 @@
             #winner-overlay .score-summary { font-size: 1.2em; }
         }
 
-        @media (max-width: 420px) {
+@media (max-width: 420px) {
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .header-brand { display: none; }
             .label { font-size: 0.86em; padding: 9px 7px 11px; }
             .points-badge { font-size: 0.78em; padding: 3px 8px; }
             .zoom-btn { width: 31px; height: 31px; font-size: 1em; bottom: 56px; }
