@@ -620,10 +620,13 @@
         let timerInterval;
         let lastTrollTime = 0;
         const TROLL_COOLDOWN = 75 * 1000;
+        const SCORE_REVEAL_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
+        const SCORE_REVEAL_WINDOW_MS = 60 * 1000; // reveal for 1 minute
 
         // --- Network Sync Setup ---
         const MQTT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
         const TOPIC_PREFIX = "groetsgreun/score/panningen/2024/";
+        const GAME_START_TOPIC = TOPIC_PREFIX + 'gameStart';
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
         let opponentState = {};
@@ -692,7 +695,7 @@
         }
 
         function initApp() {
-            if (startTime && myTeam) {
+            if (myTeam) {
                 state = myTeam === 'Leiding' ? {} : loadStateForTeam(myTeam);
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
@@ -725,6 +728,10 @@
                 const toggleContainer = document.querySelector('.toggle-container');
                 if (toggleContainer) {
                     toggleContainer.style.display = myTeam === 'Leiding' ? 'none' : 'block';
+                }
+
+                if (!startTime) {
+                    document.getElementById('timer').innerText = "Wachten op Leiding...";
                 }
             }
 
@@ -777,6 +784,9 @@
                     if (!err) {
                         console.log("Subscribed to sync topics");
                         publishState();
+                        if (myTeam === 'Leiding' && startTime) {
+                            publishGameStartWhenConnected(Number(startTime), 0, false);
+                        }
                     }
                 });
             });
@@ -822,6 +832,17 @@
                     if (topic.endsWith('/notify')) {
                         if (data.targetTeam === myTeam || data.targetTeam === 'Beide') {
                             showNotification(data.message);
+                        }
+                        return;
+                    }
+
+                    if (topic.endsWith('/gameStart')) {
+                        const syncedStart = Number(data.timestamp || 0);
+                        if (syncedStart > 0 && Number(startTime || 0) !== syncedStart) {
+                            startTime = syncedStart;
+                            localStorage.setItem(STORAGE_KEYS.start, String(startTime));
+                            startTimerInterval();
+                            updateScoreDisplay();
                         }
                         return;
                     }
@@ -878,16 +899,35 @@
             }
         }
 
+        function publishGameStartWhenConnected(startTimestamp, attempt = 0, announce = true) {
+            const maxAttempts = 30; // ~6 seconds total retry window
+            if (!mqttClient || !mqttClient.connected) {
+                if (attempt < maxAttempts) {
+                    setTimeout(() => publishGameStartWhenConnected(startTimestamp, attempt + 1, announce), 200);
+                } else {
+                    console.warn("Game start broadcast skipped: MQTT not connected");
+                }
+                return;
+            }
+
+            mqttClient.publish(
+                GAME_START_TOPIC,
+                JSON.stringify({ action: 'start', timestamp: startTimestamp, by: 'Leiding' }),
+                { retain: true, qos: 1 }
+            );
+
+            if (announce && myTeam === 'Leiding') {
+                showNotification("Spel gestart!");
+            }
+        }
+
         function selectTeam(teamName) {
             myTeam = teamName;
             localStorage.setItem(STORAGE_KEYS.team, myTeam);
-            state = {};
-            saveStateForTeam();
+            state = loadStateForTeam(myTeam);
             opponentState = {};
             opponentScore = 0;
-            
-            startTime = Date.now();
-            localStorage.setItem(STORAGE_KEYS.start, startTime);
+            startTime = localStorage.getItem(STORAGE_KEYS.start);
             
             document.getElementById('intro-screen').style.display = 'none';
             document.getElementById('game-screen').style.display = 'block';
@@ -896,6 +936,10 @@
             startTimerInterval();
             updateScore();
             renderGrid();
+
+            if (!startTime) {
+                document.getElementById('timer').innerText = "Wachten op Leiding...";
+            }
         }
 
         function selectLeiding() {
@@ -903,11 +947,9 @@
             localStorage.setItem(STORAGE_KEYS.team, 'Leiding');
             state = {};
             
-            // Leiding doesn't start their own game, just watches
-            if (!startTime) {
-                startTime = Date.now();
-                localStorage.setItem(STORAGE_KEYS.start, startTime);
-            }
+            // Leiding sets the authoritative game start time for all devices.
+            if (!startTime) startTime = Date.now();
+            localStorage.setItem(STORAGE_KEYS.start, String(startTime));
 
             document.getElementById('intro-screen').style.display = 'none';
             document.getElementById('game-screen').style.display = 'block';
@@ -917,6 +959,7 @@
             startTimerInterval();
             updateScoreDisplay();
             renderGrid();
+            publishGameStartWhenConnected(Number(startTime));
         }
 
         function renderGrid() {
@@ -1129,9 +1172,19 @@
             
             const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
             const oppDisplay = myTeam === 'Groen' ? "Zij (Team Geel)" : (myTeam === 'Geel' ? "Zij (Team Groen)" : "Zij");
+            const shouldReveal = isOpponentScoreRevealWindow();
 
             document.getElementById('my-team-score').innerText = `${teamDisplay}: ${myScore} pt`;
-            document.getElementById('opp-team-score').innerText = `${oppDisplay}: verborgen`;
+            document.getElementById('opp-team-score').innerText = shouldReveal
+                ? `${oppDisplay}: ${opponentScore} pt`
+                : `${oppDisplay}: verborgen`;
+        }
+
+        function isOpponentScoreRevealWindow() {
+            if (!startTime || myTeam === 'Leiding') return false;
+            const elapsed = Date.now() - Number(startTime);
+            if (elapsed < 0) return false;
+            return (elapsed % SCORE_REVEAL_INTERVAL_MS) < SCORE_REVEAL_WINDOW_MS;
         }
 
         function startTimerInterval() {
@@ -1141,7 +1194,10 @@
         }
 
         function tickTimer() {
-            if (!startTime) return;
+            if (!startTime) {
+                document.getElementById('timer').innerText = "Wachten op Leiding...";
+                return;
+            }
             const now = Date.now();
             const elapsed = now - parseInt(startTime);
             const totalMs = TOTAL_MINUTES * 60 * 1000;
@@ -1164,6 +1220,10 @@
             } else if (m < 20) {
                 timerEl.style.backgroundColor = "#ffc107";
                 timerEl.style.color = "#000";
+            }
+
+            if (myTeam !== 'Leiding') {
+                updateScoreDisplay();
             }
         }
 
@@ -1226,6 +1286,39 @@
             }());
         }
 
+        function broadcastResetWhenConnected(resetTimestamp, attempt = 0) {
+            const maxAttempts = 30; // ~6 seconds total retry window
+            if (!mqttClient || !mqttClient.connected) {
+                if (attempt < maxAttempts) {
+                    setTimeout(() => broadcastResetWhenConnected(resetTimestamp, attempt + 1), 200);
+                } else {
+                    console.warn("Reset broadcast skipped: MQTT not connected");
+                }
+                return;
+            }
+
+            const clearPayload = JSON.stringify({ team: 'Groen', state: {}, timestamp: resetTimestamp });
+            const geelPayload = JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp });
+            const resetPayload = JSON.stringify({ action: 'reload', timestamp: resetTimestamp });
+
+            // Persist cleared team states for reconnecting clients.
+            mqttClient.publish(TOPIC_PREFIX + 'Groen', clearPayload, { retain: true, qos: 1 });
+            mqttClient.publish(TOPIC_PREFIX + 'Geel', geelPayload, { retain: true, qos: 1 });
+
+            // Retained reset makes sure briefly disconnected clients still receive it.
+            mqttClient.publish(TOPIC_PREFIX + 'reset', resetPayload, { retain: true, qos: 1 });
+
+            // Clear authoritative game start so a new round can start cleanly.
+            mqttClient.publish(GAME_START_TOPIC, '', { retain: true, qos: 1 });
+
+            // Remove retained reset event after delivery window to avoid stale future reloads.
+            setTimeout(() => {
+                if (mqttClient && mqttClient.connected) {
+                    mqttClient.publish(TOPIC_PREFIX + 'reset', '', { retain: true, qos: 1 });
+                }
+            }, 15000);
+        }
+
         function resetGame() {
             if(confirm("Weet je zeker dat je het hele spel wilt resetten? Iedereen wordt teruggestuurd naar het beginscherm!")) {
                 // Clear local storage
@@ -1233,14 +1326,7 @@
                 
                 if (mqttClient) {
                     const resetTimestamp = Date.now();
-
-                    // Clear retained messages to reset the broker for a new game
-                    mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {}, timestamp: resetTimestamp }), { retain: true });
-                    mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp }), { retain: true });
-                    
-                    // Ensure no stale retained reset event remains, then send a transient reset event.
-                    mqttClient.publish(TOPIC_PREFIX + 'reset', '', { retain: true });
-                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload', timestamp: resetTimestamp }), { retain: false });
+                    broadcastResetWhenConnected(resetTimestamp);
                     
                     // Longer delay to ensure message is sent
                     setTimeout(() => {

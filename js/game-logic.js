@@ -68,11 +68,29 @@ function mergeTeammateState(currentState, incomingState) {
   return { changed: changed, state: merged };
 }
 
-function getOpponentScoreText(myTeam) {
+function shouldRevealOpponentScore(options) {
+  var startTime = Number(options.startTime || 0);
+  var now = Number(options.now || 0);
+  var myTeam = options.myTeam;
+  var intervalMs = Number(options.intervalMs || 0);
+  var windowMs = Number(options.windowMs || 0);
+
+  if (myTeam === "Leiding" || startTime <= 0 || now <= 0 || intervalMs <= 0 || windowMs <= 0) {
+    return false;
+  }
+
+  var elapsed = now - startTime;
+  if (elapsed < 0) return false;
+  return (elapsed % intervalMs) < windowMs;
+}
+
+function getOpponentScoreText(myTeam, opponentScore, revealNow) {
   var oppDisplay = myTeam === "Groen"
     ? "Zij (Team Geel)"
     : (myTeam === "Geel" ? "Zij (Team Groen)" : "Zij");
-  return oppDisplay + ": verborgen";
+  return revealNow
+    ? (oppDisplay + ": " + opponentScore + " pt")
+    : (oppDisplay + ": verborgen");
 }
 
 module.exports = {
@@ -83,5 +101,6 @@ module.exports = {
   shouldReloadOnReset: shouldReloadOnReset,
   classifyMessage: classifyMessage,
   mergeTeammateState: mergeTeammateState,
+  shouldRevealOpponentScore: shouldRevealOpponentScore,
   getOpponentScoreText: getOpponentScoreText
 };

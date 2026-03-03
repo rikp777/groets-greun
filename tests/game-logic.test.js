@@ -95,7 +95,38 @@ test("mergeTeammateState updates changed values including false toggles", functi
   assert.deepEqual(result.state, { church: 111, bench: false, woman: 222 });
 });
 
-test("opponent score text is hidden for teams", function () {
-  assert.equal(logic.getOpponentScoreText("Groen"), "Zij (Team Geel): verborgen");
-  assert.equal(logic.getOpponentScoreText("Geel"), "Zij (Team Groen): verborgen");
+test("opponent score is only revealed inside 10-minute windows", function () {
+  var start = 1_000_000;
+  var interval = 10 * 60 * 1000;
+  var windowMs = 60 * 1000;
+
+  assert.equal(logic.shouldRevealOpponentScore({
+    myTeam: "Groen",
+    startTime: start,
+    now: start + 30 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs
+  }), true);
+
+  assert.equal(logic.shouldRevealOpponentScore({
+    myTeam: "Groen",
+    startTime: start,
+    now: start + 5 * 60 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs
+  }), false);
+
+  assert.equal(logic.shouldRevealOpponentScore({
+    myTeam: "Groen",
+    startTime: start,
+    now: start + 10 * 60 * 1000 + 10 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs
+  }), true);
+});
+
+test("opponent score text follows reveal state", function () {
+  assert.equal(logic.getOpponentScoreText("Groen", 75, false), "Zij (Team Geel): verborgen");
+  assert.equal(logic.getOpponentScoreText("Geel", 80, false), "Zij (Team Groen): verborgen");
+  assert.equal(logic.getOpponentScoreText("Groen", 75, true), "Zij (Team Geel): 75 pt");
 });
