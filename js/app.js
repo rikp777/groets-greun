@@ -27,6 +27,7 @@ const TOTAL_MINUTES = 75;
         const STREAK_REQUIRED_APPROVALS = 3;
         const STREAK_WINDOW_MS = 8 * 60 * 1000;
         const STREAK_BONUS_POINTS = 10;
+        const LEIDING_PASSWORD = 'leiding123';
         const PROOF_MAX_IMAGE_SIDE = 960;
         const PROOF_IMAGE_QUALITY = 0.72;
         const PROOF_MAX_DATA_URL_LENGTH = 550000;
@@ -1259,6 +1260,13 @@ const TOTAL_MINUTES = 75;
         }
 
         function selectLeiding() {
+            const enteredPassword = prompt("Voer het wachtwoord voor de leiding in:");
+            if (enteredPassword === null) return;
+            if (enteredPassword.trim() !== LEIDING_PASSWORD) {
+                alert("Onjuist wachtwoord.");
+                return;
+            }
+
             myTeam = 'Leiding';
             localStorage.setItem(STORAGE_KEYS.team, 'Leiding');
             state = {};
