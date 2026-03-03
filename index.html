@@ -144,6 +144,15 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
 
+        .opp-badge {
+            display: block;
+            color: #f57f17;
+            font-weight: bold;
+            font-size: 0.75em;
+            margin-bottom: 2px;
+            text-align: center;
+        }
+
         .label {
             padding: 12px 10px;
             text-align: center;
@@ -339,7 +348,15 @@
         const TOPIC_PREFIX = "groetsgreun/score/panningen/2024/";
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
+        let opponentState = {};
         let opponentScore = 0;
+
+        function getRelativeTime(timestamp) {
+            if (!timestamp) return "";
+            const diff = Math.floor((Date.now() - timestamp) / 60000);
+            if (diff < 1) return "zojuist";
+            return `${diff} min. geleden`;
+        }
 
         function initApp() {
             if (startTime && myTeam) {
@@ -349,6 +366,9 @@
                 initMQTT();
                 updateScore();
                 renderGrid();
+
+                // Refresh relative times every 30 seconds
+                setInterval(renderGrid, 30000);
             }
 
             // Pinch Zoom Listeners
@@ -424,18 +444,22 @@
                     
                     if (data.team !== myTeam) {
                         // Received Opponent's State
+                        opponentState = data.state || {};
                         let oppScore = 0;
                         photos.forEach(p => {
-                            if (data.state[p.id]) oppScore += p.points;
+                            if (opponentState[p.id]) {
+                                oppScore += p.points;
+                            }
                         });
                         opponentScore = oppScore;
                         updateScoreDisplay();
+                        renderGrid(); // Refresh to show opponent badges
                     } else if (data.clientId !== myClientId) {
                         // Received State from Teammate (different phone, same team)
                         let changed = false;
                         for (const key in data.state) {
                             if (data.state[key] && !state[key]) {
-                                state[key] = true;
+                                state[key] = data.state[key]; // Store value (timestamp or true)
                                 changed = true;
                             }
                         }
@@ -485,15 +509,27 @@
             grid.innerHTML = '';
             
             photos.forEach(photo => {
-                const isFound = state[photo.id] === true;
+                const myFoundVal = state[photo.id];
+                const isFound = myFoundVal === true || typeof myFoundVal === 'number';
+                
+                const oppFoundVal = opponentState[photo.id];
+                const isOpponentFound = oppFoundVal === true || typeof oppFoundVal === 'number';
+                
                 const card = document.createElement('div');
                 card.className = `photo-card ${isFound ? 'found' : ''}`;
                 card.onclick = () => togglePhoto(photo.id);
+                
+                let oppBadge = "";
+                if (isOpponentFound) {
+                    const timeStr = typeof oppFoundVal === 'number' ? ` (${getRelativeTime(oppFoundVal)})` : "";
+                    oppBadge = `<div class="opp-badge">Tegenstander gevonden${timeStr}</div>`;
+                }
                 
                 card.innerHTML = `
                     <div class="points-badge">${photo.points} pt</div>
                     <img src="pictures/${photo.file}" alt="${photo.label}">
                     <div class="zoom-btn" onclick="openModal('pictures/${photo.file}', event)">🔍</div>
+                    ${oppBadge}
                     <div class="label">${photo.label}</div>
                     <div class="found-stamp">GEVONDEN</div>
                 `;
@@ -516,7 +552,7 @@
         function togglePhoto(id) {
             if (!state[id]) {
                 if(confirm("Hebben jullie de groepsfoto naar de leiding ge-WhatsAppt?")) {
-                    state[id] = true;
+                    state[id] = Date.now();
                     triggerConfetti();
                 } else {
                     return;
