@@ -354,6 +354,7 @@
             <p><strong>Kies je Team om te starten:</strong></p>
             <button class="btn" onclick="selectTeam('Groen')">TEAM GROEN</button>
             <button class="btn btn-geel" onclick="selectTeam('Geel')">TEAM GEEL</button>
+            <button class="btn" style="background: #555; margin-top: 20px;" onclick="selectLeiding()">LEIDING LOGIN</button>
         </div>
     </div>
 
@@ -422,6 +423,7 @@
         let mqttClient = null;
         let opponentState = {};
         let opponentScore = 0;
+        let leidingState = { 'Groen': {}, 'Geel': {} };
 
         function getRelativeTime(timestamp) {
             if (!timestamp) return "";
@@ -519,7 +521,14 @@
                 try {
                     const data = JSON.parse(message.toString());
                     
-                    if (data.team !== myTeam) {
+                    if (myTeam === 'Leiding') {
+                        // Leiding tracks everything
+                        if (data.team === 'Groen' || data.team === 'Geel') {
+                            leidingState[data.team] = data.state || {};
+                            updateScoreDisplay();
+                            renderGrid();
+                        }
+                    } else if (data.team !== myTeam) {
                         // Received Opponent's State
                         opponentState = data.state || {};
                         let oppScore = 0;
@@ -581,32 +590,75 @@
             renderGrid();
         }
 
+        function selectLeiding() {
+            const pass = prompt("Wachtwoord voor Leiding:");
+            if (pass === "gg2024") {
+                myTeam = 'Leiding';
+                localStorage.setItem('groetsGreunTeam', 'Leiding');
+                
+                // Leiding doesn't start their own game, just watches
+                if (!startTime) {
+                    startTime = Date.now();
+                    localStorage.setItem('groetsGreunStart', startTime);
+                }
+
+                document.getElementById('intro-screen').style.display = 'none';
+                document.getElementById('game-screen').style.display = 'block';
+                document.querySelector('.toggle-container').style.display = 'none';
+                
+                initMQTT();
+                startTimerInterval();
+                updateScoreDisplay();
+                renderGrid();
+            } else {
+                alert("Verkeerd wachtwoord!");
+            }
+        }
+
         function renderGrid() {
             const grid = document.getElementById('photo-grid');
             grid.innerHTML = '';
             
             photos.forEach(photo => {
-                const myFoundVal = state[photo.id];
-                const isFound = myFoundVal === true || typeof myFoundVal === 'number';
-                
-                const oppFoundVal = opponentState[photo.id];
-                const isOpponentFound = (oppFoundVal === true || typeof oppFoundVal === 'number') && showOpponentProgress;
-                
                 const card = document.createElement('div');
-                card.className = `photo-card ${isFound ? 'found' : ''}`;
-                card.onclick = () => togglePhoto(photo.id);
+                card.className = 'photo-card';
                 
-                let oppBadge = "";
-                if (isOpponentFound) {
-                    const timeStr = typeof oppFoundVal === 'number' ? ` (${getRelativeTime(oppFoundVal)})` : "";
-                    oppBadge = `<div class="opp-badge">Tegenstander gevonden${timeStr}</div>`;
+                let badges = `<div class="points-badge">${photo.points} pt</div>`;
+                
+                if (myTeam === 'Leiding') {
+                    const groenVal = leidingState['Groen'][photo.id];
+                    const geelVal = leidingState['Geel'][photo.id];
+                    
+                    if (groenVal) {
+                        const time = typeof groenVal === 'number' ? ` (${getRelativeTime(groenVal)})` : "";
+                        badges += `<div class="opp-badge" style="background:#2e7d32; color:white; margin-top:35px;">Groen gevonden${time}</div>`;
+                    }
+                    if (geelVal) {
+                        const time = typeof geelVal === 'number' ? ` (${getRelativeTime(geelVal)})` : "";
+                        badges += `<div class="opp-badge" style="background:#fbc02d; color:black; margin-top:2px;">Geel gevonden${time}</div>`;
+                    }
+                    
+                    if (groenVal && geelVal) card.classList.add('found');
+                } else {
+                    const myFoundVal = state[photo.id];
+                    const isFound = myFoundVal === true || typeof myFoundVal === 'number';
+                    
+                    const oppFoundVal = opponentState[photo.id];
+                    const isOpponentFound = (oppFoundVal === true || typeof oppFoundVal === 'number') && showOpponentProgress;
+                    
+                    if (isFound) card.classList.add('found');
+                    card.onclick = () => togglePhoto(photo.id);
+                    
+                    if (isOpponentFound) {
+                        const timeStr = typeof oppFoundVal === 'number' ? ` (${getRelativeTime(oppFoundVal)})` : "";
+                        badges += `<div class="opp-badge">Tegenstander gevonden${timeStr}</div>`;
+                    }
                 }
                 
                 card.innerHTML = `
-                    <div class="points-badge">${photo.points} pt</div>
+                    ${badges}
                     <img src="pictures/${photo.file}" alt="${photo.label}">
                     <div class="zoom-btn" onclick="openModal('pictures/${photo.file}', event)">🔍</div>
-                    ${oppBadge}
                     <div class="label">${photo.label}</div>
                     <div class="found-stamp">GEVONDEN</div>
                 `;
@@ -659,6 +711,18 @@
         }
 
         function updateScoreDisplay(myScore = null) {
+            if (myTeam === 'Leiding') {
+                let groenScore = 0;
+                let geelScore = 0;
+                photos.forEach(p => {
+                    if (leidingState['Groen'][p.id]) groenScore += p.points;
+                    if (leidingState['Geel'][p.id]) geelScore += p.points;
+                });
+                document.getElementById('my-team-score').innerText = `Team Groen: ${groenScore} pt`;
+                document.getElementById('opp-team-score').innerText = `Team Geel: ${geelScore} pt`;
+                return;
+            }
+
             if (myScore === null) {
                 myScore = 0;
                 photos.forEach(p => { if (state[p.id]) myScore += p.points; });
