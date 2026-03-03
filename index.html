@@ -714,7 +714,8 @@
                         return;
                     }
                     
-                    if (topic.endsWith('/reset')) {
+                    if (topic.includes('/reset')) {
+                        console.log("Global reset received, reloading...");
                         location.reload();
                         return;
                     }
@@ -1127,13 +1128,13 @@
                     mqttClient.publish(TOPIC_PREFIX + 'Groen', JSON.stringify({ team: 'Groen', state: {} }), { retain: true });
                     mqttClient.publish(TOPIC_PREFIX + 'Geel', JSON.stringify({ team: 'Geel', state: {} }), { retain: true });
                     
-                    // Broadcast reset to all clients
-                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload' }));
+                    // Broadcast reset to all clients (with retain to ensure everyone gets it)
+                    mqttClient.publish(TOPIC_PREFIX + 'reset', JSON.stringify({ action: 'reload' }), { retain: true });
                     
-                    // Small delay to ensure messages are sent before reload
+                    // Longer delay to ensure message is sent
                     setTimeout(() => {
                         location.reload();
-                    }, 500);
+                    }, 1500);
                 } else {
                     location.reload();
                 }
