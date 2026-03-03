@@ -130,3 +130,37 @@ test("opponent score text follows reveal state", function () {
   assert.equal(logic.getOpponentScoreText("Geel", 80, false), "Zij (Team Groen): verborgen");
   assert.equal(logic.getOpponentScoreText("Groen", 75, true), "Zij (Team Geel): 75 pt");
 });
+
+test("race moment state is deterministic and active in its 2-minute window", function () {
+  var start = 1_000_000;
+  var challenges = ["A", "B", "C"];
+  var interval = 12 * 60 * 1000;
+  var windowMs = 2 * 60 * 1000;
+
+  var activeMoment = logic.getRaceMoment({
+    startTime: start,
+    now: start + 30 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs,
+    challenges: challenges
+  });
+  assert.equal(activeMoment.active, true);
+  assert.equal(activeMoment.round, 0);
+  assert.ok(challenges.includes(activeMoment.challenge));
+
+  var inactiveMoment = logic.getRaceMoment({
+    startTime: start,
+    now: start + 4 * 60 * 1000,
+    intervalMs: interval,
+    windowMs: windowMs,
+    challenges: challenges
+  });
+  assert.equal(inactiveMoment.active, false);
+  assert.equal(inactiveMoment.round, 0);
+  assert.ok(inactiveMoment.nextInMs > 0);
+});
+
+test("race bonus points use unique claimed rounds", function () {
+  assert.equal(logic.getRaceBonusPoints({ "0": 1111, "1": 2222 }, 15), 30);
+  assert.equal(logic.getRaceBonusPoints({}, 15), 0);
+});

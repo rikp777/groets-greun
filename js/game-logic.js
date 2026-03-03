@@ -93,6 +93,49 @@ function getOpponentScoreText(myTeam, opponentScore, revealNow) {
     : (oppDisplay + ": verborgen");
 }
 
+function getRaceBonusPoints(claims, bonusPerClaim) {
+  var points = Number(bonusPerClaim || 0);
+  if (points <= 0 || !claims || typeof claims !== "object") return 0;
+  return Object.keys(claims).length * points;
+}
+
+function getRaceChallengeForRound(startTime, round, challenges) {
+  if (!Array.isArray(challenges) || challenges.length === 0) return "";
+  var baseSeed = Number(startTime || 0) + (Number(round || 0) + 1) * 7919;
+  var x = Math.sin(baseSeed) * 10000;
+  var idx = Math.abs(Math.floor((x - Math.floor(x)) * 1000000)) % challenges.length;
+  return challenges[idx];
+}
+
+function getRaceMoment(options) {
+  var startTime = Number(options.startTime || 0);
+  var now = Number(options.now || 0);
+  var intervalMs = Number(options.intervalMs || 0);
+  var windowMs = Number(options.windowMs || 0);
+  var challenges = options.challenges || [];
+
+  if (startTime <= 0 || now <= 0 || intervalMs <= 0 || windowMs <= 0) {
+    return { active: false, round: -1, challenge: "", msLeft: 0, nextInMs: 0 };
+  }
+
+  var elapsed = now - startTime;
+  if (elapsed < 0) {
+    return { active: false, round: -1, challenge: "", msLeft: 0, nextInMs: 0 };
+  }
+
+  var round = Math.floor(elapsed / intervalMs);
+  var phaseMs = elapsed % intervalMs;
+  var active = phaseMs < windowMs;
+
+  return {
+    active: active,
+    round: round,
+    challenge: getRaceChallengeForRound(startTime, round, challenges),
+    msLeft: active ? (windowMs - phaseMs) : 0,
+    nextInMs: active ? 0 : (intervalMs - phaseMs)
+  };
+}
+
 module.exports = {
   getTeamStateKey: getTeamStateKey,
   normalizeState: normalizeState,
@@ -102,5 +145,8 @@ module.exports = {
   classifyMessage: classifyMessage,
   mergeTeammateState: mergeTeammateState,
   shouldRevealOpponentScore: shouldRevealOpponentScore,
-  getOpponentScoreText: getOpponentScoreText
+  getOpponentScoreText: getOpponentScoreText,
+  getRaceBonusPoints: getRaceBonusPoints,
+  getRaceChallengeForRound: getRaceChallengeForRound,
+  getRaceMoment: getRaceMoment
 };

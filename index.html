@@ -289,6 +289,40 @@
             font-size: 0.9em;
         }
 
+        #race-moment {
+            background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+
+        #race-moment .title {
+            font-weight: 900;
+            font-size: 0.95em;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        #race-moment .meta {
+            font-size: 0.85em;
+            opacity: 0.95;
+        }
+
+        #race-claim-btn {
+            margin-top: 8px;
+            background: #ffffff;
+            color: #e65100;
+            border: none;
+            border-radius: 999px;
+            font-weight: 900;
+            padding: 8px 14px;
+            cursor: pointer;
+            width: 100%;
+        }
+
         .switch {
             position: relative;
             display: inline-block;
@@ -466,6 +500,7 @@
         }
 
     </style>
+    <script src="js/game-logic.js"></script>
 </head>
 <body>
 
@@ -502,7 +537,7 @@
             <p><strong>Kies je Team om te starten:</strong></p>
             <button class="btn" onclick="selectTeam('Groen')">TEAM GROEN</button>
             <button class="btn btn-geel" onclick="selectTeam('Geel')">TEAM GEEL</button>
-            <button class="btn" style="background: #555; margin-top: 20px;" onclick="selectLeiding()">LEIDING LOGIN</button>
+            <button class="btn" style="background: #555; margin-top: 20px;" onclick="selectLeiding()">LEIDING</button>
         </div>
     </div>
 
@@ -533,6 +568,13 @@
                 <input type="checkbox" id="opp-toggle" onchange="toggleOpponentVisibility(this.checked)">
                 <span class="slider"></span>
             </label>
+        </div>
+
+        <div id="race-moment">
+            <div class="title">Race Moment</div>
+            <div id="race-moment-text">Wachten op Leiding...</div>
+            <div id="race-moment-meta" class="meta"></div>
+            <button id="race-claim-btn" onclick="claimRaceBonus()">BONUS CLAIMEN (+15)</button>
         </div>
         
         <div class="grid" id="photo-grid">
@@ -622,6 +664,17 @@
         const TROLL_COOLDOWN = 75 * 1000;
         const SCORE_REVEAL_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
         const SCORE_REVEAL_WINDOW_MS = 60 * 1000; // reveal for 1 minute
+        const RACE_INTERVAL_MS = 12 * 60 * 1000; // new challenge every 12 minutes
+        const RACE_WINDOW_MS = 2 * 60 * 1000; // challenge active for 2 minutes
+        const RACE_BONUS_POINTS = 15;
+        const RACE_CHALLENGES = [
+            "Maak een creatieve teamselfie met iets roods.",
+            "Doe een groepsfoto met iedereen springend in de lucht.",
+            "Maak een foto met een dier of dierensymbool.",
+            "Maak een foto met een straatnaambord dat met 'B' begint.",
+            "Maak een foto met iets dat rond is (fietswiel, klok, bord).",
+            "Maak een foto met een persoon die jullie een duim omhoog geeft."
+        ];
 
         // --- Network Sync Setup ---
         const MQTT_BROKER = "wss://broker.hivemq.com:8884/mqtt";
@@ -630,10 +683,16 @@
         const myClientId = Math.random().toString(36).substring(7);
         let mqttClient = null;
         let opponentState = {};
+        let raceClaims = {};
+        let opponentRaceClaims = {};
         let opponentScore = 0;
         let leidingState = { 'Groen': {}, 'Geel': {} };
+        let leidingRaceClaims = { 'Groen': {}, 'Geel': {} };
         function getTeamStateKey(team) {
             return `groetsGreunState_${team}`;
+        }
+        function getTeamRaceClaimsKey(team) {
+            return `groetsGreunRaceClaims_${team}`;
         }
 
         function normalizeState(rawState) {
@@ -678,13 +737,142 @@
             localStorage.setItem(getTeamStateKey(myTeam), JSON.stringify(normalizeState(state)));
         }
 
+        function normalizeRaceClaims(rawClaims) {
+            const normalized = {};
+            if (!rawClaims || typeof rawClaims !== 'object') return normalized;
+
+            for (const key in rawClaims) {
+                if (!Object.prototype.hasOwnProperty.call(rawClaims, key)) continue;
+                const round = Number(key);
+                if (!Number.isInteger(round) || round < 0) continue;
+                const value = rawClaims[key];
+                if (value === true || typeof value === 'number') {
+                    normalized[String(round)] = value;
+                }
+            }
+            return normalized;
+        }
+
+        function loadRaceClaimsForTeam(team) {
+            if (!team || team === 'Leiding') return {};
+            let parsed = {};
+            try {
+                parsed = JSON.parse(localStorage.getItem(getTeamRaceClaimsKey(team)) || '{}') || {};
+            } catch (e) {
+                parsed = {};
+            }
+            return normalizeRaceClaims(parsed);
+        }
+
+        function saveRaceClaimsForTeam() {
+            if (!myTeam || myTeam === 'Leiding') return;
+            localStorage.setItem(getTeamRaceClaimsKey(myTeam), JSON.stringify(normalizeRaceClaims(raceClaims)));
+        }
+
+        function getRaceBonusPoints(claims) {
+            return Object.keys(normalizeRaceClaims(claims)).length * RACE_BONUS_POINTS;
+        }
+
+        function seededRoundIndex(seed) {
+            const x = Math.sin(seed) * 10000;
+            return Math.floor((x - Math.floor(x)) * 1000000);
+        }
+
+        function getRaceChallengeForRound(round) {
+            if (!RACE_CHALLENGES.length) return "";
+            const baseSeed = Number(startTime || 0) + (round + 1) * 7919;
+            const idx = Math.abs(seededRoundIndex(baseSeed)) % RACE_CHALLENGES.length;
+            return RACE_CHALLENGES[idx];
+        }
+
+        function getCurrentRaceMoment() {
+            if (!startTime) return { active: false, round: -1, msLeft: 0, nextInMs: 0, challenge: "" };
+            const elapsed = Date.now() - Number(startTime);
+            if (elapsed < 0) return { active: false, round: -1, msLeft: 0, nextInMs: 0, challenge: "" };
+
+            const round = Math.floor(elapsed / RACE_INTERVAL_MS);
+            const phaseMs = elapsed % RACE_INTERVAL_MS;
+            const active = phaseMs < RACE_WINDOW_MS;
+            const challenge = getRaceChallengeForRound(round);
+
+            return {
+                active: active,
+                round: round,
+                challenge: challenge,
+                msLeft: active ? (RACE_WINDOW_MS - phaseMs) : 0,
+                nextInMs: active ? 0 : (RACE_INTERVAL_MS - phaseMs)
+            };
+        }
+
+        function formatClock(ms) {
+            const totalSec = Math.max(0, Math.floor(ms / 1000));
+            const m = Math.floor(totalSec / 60);
+            const s = totalSec % 60;
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        function updateRaceMomentUI() {
+            const box = document.getElementById('race-moment');
+            const text = document.getElementById('race-moment-text');
+            const meta = document.getElementById('race-moment-meta');
+            const btn = document.getElementById('race-claim-btn');
+            if (!box || !text || !meta || !btn) return;
+
+            if (!startTime) {
+                text.innerText = "Wachten op Leiding...";
+                meta.innerText = "";
+                btn.style.display = 'none';
+                return;
+            }
+
+            const moment = getCurrentRaceMoment();
+            const isLeiding = myTeam === 'Leiding';
+            const alreadyClaimed = !!raceClaims[String(moment.round)];
+
+            if (moment.active) {
+                box.style.opacity = '1';
+                text.innerText = moment.challenge;
+                meta.innerText = `Nog ${formatClock(moment.msLeft)} | Bonus: +${RACE_BONUS_POINTS} pt`;
+                btn.style.display = isLeiding ? 'none' : 'block';
+                btn.disabled = alreadyClaimed;
+                btn.innerText = alreadyClaimed ? 'BONUS AL GECLAIMD' : `BONUS CLAIMEN (+${RACE_BONUS_POINTS})`;
+                btn.style.opacity = alreadyClaimed ? '0.65' : '1';
+            } else {
+                box.style.opacity = '0.85';
+                text.innerText = "Volgend Race Moment komt eraan";
+                meta.innerText = `Over ${formatClock(moment.nextInMs)} start een 2-min challenge`;
+                btn.style.display = 'none';
+            }
+        }
+
         function clearGameLocalData() {
             localStorage.removeItem(STORAGE_KEYS.stateLegacy);
             localStorage.removeItem(getTeamStateKey('Groen'));
             localStorage.removeItem(getTeamStateKey('Geel'));
+            localStorage.removeItem(getTeamRaceClaimsKey('Groen'));
+            localStorage.removeItem(getTeamRaceClaimsKey('Geel'));
             localStorage.removeItem(STORAGE_KEYS.start);
             localStorage.removeItem(STORAGE_KEYS.team);
             localStorage.removeItem(STORAGE_KEYS.showOpp);
+        }
+
+        function applyRoleUi() {
+            const isLeiding = myTeam === 'Leiding';
+
+            // Hide all reset buttons for teams; only leiding can full-reset.
+            document.querySelectorAll('.reset-btn').forEach(btn => {
+                btn.style.display = isLeiding ? 'inline-block' : 'none';
+            });
+
+            const leidingControls = document.getElementById('leiding-controls');
+            if (leidingControls) {
+                leidingControls.style.display = isLeiding ? 'block' : 'none';
+            }
+
+            const toggleContainer = document.querySelector('.toggle-container');
+            if (toggleContainer) {
+                toggleContainer.style.display = isLeiding ? 'none' : 'block';
+            }
         }
 
         function getRelativeTime(timestamp) {
@@ -697,6 +885,7 @@
         function initApp() {
             if (myTeam) {
                 state = myTeam === 'Leiding' ? {} : loadStateForTeam(myTeam);
+                raceClaims = myTeam === 'Leiding' ? {} : loadRaceClaimsForTeam(myTeam);
                 document.getElementById('intro-screen').style.display = 'none';
                 document.getElementById('game-screen').style.display = 'block';
                 
@@ -708,27 +897,14 @@
                 initMQTT();
                 updateScore();
                 renderGrid();
+                updateRaceMomentUI();
 
                 // Refresh relative times every 30 seconds
                 setInterval(renderGrid, 30000);
                 updateTrollButton();
                 
                 // Hide reset button for regular teams
-                const resetBtn = document.querySelector('.reset-btn');
-                if (resetBtn) {
-                    resetBtn.style.display = myTeam === 'Leiding' ? 'inline-block' : 'none';
-                }
-
-                // Show leiding controls
-                const leidingControls = document.getElementById('leiding-controls');
-                if (leidingControls) {
-                    leidingControls.style.display = myTeam === 'Leiding' ? 'block' : 'none';
-                }
-
-                const toggleContainer = document.querySelector('.toggle-container');
-                if (toggleContainer) {
-                    toggleContainer.style.display = myTeam === 'Leiding' ? 'none' : 'block';
-                }
+                applyRoleUi();
 
                 if (!startTime) {
                     document.getElementById('timer').innerText = "Wachten op Leiding...";
@@ -843,6 +1019,7 @@
                             localStorage.setItem(STORAGE_KEYS.start, String(startTime));
                             startTimerInterval();
                             updateScoreDisplay();
+                            updateRaceMomentUI();
                         }
                         return;
                     }
@@ -853,21 +1030,25 @@
 
                     if (myTeam === 'Leiding') {
                         leidingState[topicSuffix] = normalizeState(data.state);
+                        leidingRaceClaims[topicSuffix] = normalizeRaceClaims(data.raceClaims || {});
                         updateScoreDisplay();
                         renderGrid();
                     } else if (topicSuffix !== myTeam) {
                         // Received Opponent's State
                         opponentState = normalizeState(data.state);
+                        opponentRaceClaims = normalizeRaceClaims(data.raceClaims || {});
                         let oppScore = 0;
                         photos.forEach(p => {
                             if (opponentState[p.id]) oppScore += p.points;
                         });
+                        oppScore += getRaceBonusPoints(opponentRaceClaims);
                         opponentScore = oppScore;
                         updateScoreDisplay();
                         renderGrid(); 
                     } else if (data.clientId !== myClientId) {
                         // Received State from Teammate
                         const incomingState = normalizeState(data.state);
+                        const incomingRaceClaims = normalizeRaceClaims(data.raceClaims || {});
                         let changed = false;
                         for (const key in incomingState) {
                             if (state[key] !== incomingState[key]) {
@@ -875,10 +1056,18 @@
                                 changed = true;
                             }
                         }
+                        for (const key in incomingRaceClaims) {
+                            if (raceClaims[key] !== incomingRaceClaims[key]) {
+                                raceClaims[key] = incomingRaceClaims[key];
+                                changed = true;
+                            }
+                        }
                         if (changed) {
                             saveStateForTeam();
+                            saveRaceClaimsForTeam();
                             renderGrid();
                             updateScore();
+                            updateRaceMomentUI();
                         }
                     }
                 } catch (e) {
@@ -893,7 +1082,8 @@
                     team: myTeam,
                     clientId: myClientId,
                     timestamp: Date.now(),
-                    state: normalizeState(state)
+                    state: normalizeState(state),
+                    raceClaims: normalizeRaceClaims(raceClaims)
                 });
                 mqttClient.publish(TOPIC_PREFIX + myTeam, payload, { retain: true });
             }
@@ -925,7 +1115,9 @@
             myTeam = teamName;
             localStorage.setItem(STORAGE_KEYS.team, myTeam);
             state = loadStateForTeam(myTeam);
+            raceClaims = loadRaceClaimsForTeam(myTeam);
             opponentState = {};
+            opponentRaceClaims = {};
             opponentScore = 0;
             startTime = localStorage.getItem(STORAGE_KEYS.start);
             
@@ -936,6 +1128,8 @@
             startTimerInterval();
             updateScore();
             renderGrid();
+            updateRaceMomentUI();
+            applyRoleUi();
 
             if (!startTime) {
                 document.getElementById('timer').innerText = "Wachten op Leiding...";
@@ -946,6 +1140,7 @@
             myTeam = 'Leiding';
             localStorage.setItem(STORAGE_KEYS.team, 'Leiding');
             state = {};
+            raceClaims = {};
             
             // Leiding sets the authoritative game start time for all devices.
             if (!startTime) startTime = Date.now();
@@ -953,13 +1148,39 @@
 
             document.getElementById('intro-screen').style.display = 'none';
             document.getElementById('game-screen').style.display = 'block';
-            document.querySelector('.toggle-container').style.display = 'none';
             
             initMQTT();
             startTimerInterval();
             updateScoreDisplay();
             renderGrid();
+            updateRaceMomentUI();
+            applyRoleUi();
             publishGameStartWhenConnected(Number(startTime));
+        }
+
+        function claimRaceBonus() {
+            if (!myTeam || myTeam === 'Leiding') return;
+
+            const moment = getCurrentRaceMoment();
+            if (!moment.active || moment.round < 0) {
+                alert("Er is nu geen actieve Race Moment challenge.");
+                return;
+            }
+
+            const roundKey = String(moment.round);
+            if (raceClaims[roundKey]) {
+                alert("Deze bonus is al geclaimd door jullie team.");
+                return;
+            }
+
+            if (!confirm("Hebben jullie de Race Moment foto echt gemaakt?")) return;
+
+            raceClaims[roundKey] = Date.now();
+            saveRaceClaimsForTeam();
+            updateScore();
+            updateRaceMomentUI();
+            publishState();
+            triggerConfetti();
         }
 
         function renderGrid() {
@@ -1149,6 +1370,7 @@
             photos.forEach(p => {
                 if (state[p.id]) myScore += p.points;
             });
+            myScore += getRaceBonusPoints(raceClaims);
             updateScoreDisplay(myScore);
         }
 
@@ -1160,6 +1382,8 @@
                     if (leidingState['Groen'][p.id]) groenScore += p.points;
                     if (leidingState['Geel'][p.id]) geelScore += p.points;
                 });
+                groenScore += getRaceBonusPoints(leidingRaceClaims['Groen']);
+                geelScore += getRaceBonusPoints(leidingRaceClaims['Geel']);
                 document.getElementById('my-team-score').innerText = `Team Groen: ${groenScore} pt`;
                 document.getElementById('opp-team-score').innerText = `Team Geel: ${geelScore} pt`;
                 return;
@@ -1168,6 +1392,7 @@
             if (myScore === null) {
                 myScore = 0;
                 photos.forEach(p => { if (state[p.id]) myScore += p.points; });
+                myScore += getRaceBonusPoints(raceClaims);
             }
             
             const teamDisplay = myTeam ? `Wij (Team ${myTeam})` : "Wij";
@@ -1196,6 +1421,7 @@
         function tickTimer() {
             if (!startTime) {
                 document.getElementById('timer').innerText = "Wachten op Leiding...";
+                updateRaceMomentUI();
                 return;
             }
             const now = Date.now();
@@ -1225,6 +1451,7 @@
             if (myTeam !== 'Leiding') {
                 updateScoreDisplay();
             }
+            updateRaceMomentUI();
         }
 
         function showWinner() {
@@ -1237,9 +1464,12 @@
                     if (leidingState['Groen'][p.id]) groenScore += p.points;
                     if (leidingState['Geel'][p.id]) geelScore += p.points;
                 });
+                groenScore += getRaceBonusPoints(leidingRaceClaims['Groen']);
+                geelScore += getRaceBonusPoints(leidingRaceClaims['Geel']);
             } else {
                 let myScore = 0;
                 photos.forEach(p => { if (state[p.id]) myScore += p.points; });
+                myScore += getRaceBonusPoints(raceClaims);
                 
                 if (myTeam === 'Groen') {
                     groenScore = myScore;
@@ -1297,8 +1527,8 @@
                 return;
             }
 
-            const clearPayload = JSON.stringify({ team: 'Groen', state: {}, timestamp: resetTimestamp });
-            const geelPayload = JSON.stringify({ team: 'Geel', state: {}, timestamp: resetTimestamp });
+            const clearPayload = JSON.stringify({ team: 'Groen', state: {}, raceClaims: {}, timestamp: resetTimestamp });
+            const geelPayload = JSON.stringify({ team: 'Geel', state: {}, raceClaims: {}, timestamp: resetTimestamp });
             const resetPayload = JSON.stringify({ action: 'reload', timestamp: resetTimestamp });
 
             // Persist cleared team states for reconnecting clients.
@@ -1320,6 +1550,9 @@
         }
 
         function resetGame() {
+            if (myTeam !== 'Leiding') {
+                return;
+            }
             if(confirm("Weet je zeker dat je het hele spel wilt resetten? Iedereen wordt teruggestuurd naar het beginscherm!")) {
                 // Clear local storage
                 clearGameLocalData();
